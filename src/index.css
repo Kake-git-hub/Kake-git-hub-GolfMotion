@@ -10,12 +10,21 @@
   box-sizing: border-box;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   min-height: 100vh;
-  overflow-x: hidden;
+  min-height: 100dvh;
 }
 
 #root {
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
