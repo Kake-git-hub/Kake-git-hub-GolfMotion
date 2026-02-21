@@ -6,15 +6,19 @@ import { initPoseDetector, detectPose, disposePoseDetector, isPoseDetectorReady,
 import { drawSkeleton } from './services/skeletonRenderer';
 import { calculateAngles, drawAngles } from './services/angleCalculator';
 import { drawGrid } from './services/gridRenderer';
+import { LandmarkSmoother } from './services/landmarkSmoother';
+import { ConfidenceInterpolator } from './services/confidenceInterpolator';
+import { SwingPhaseDetector, drawPhaseLabel, drawPhaseTimeline, type SwingPhase } from './services/swingPhaseDetector';
 import { useTouchGestures } from './hooks/useTouchGestures';
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import './App.css';
 
-type AppState = 'idle' | 'loading-model' | 'ready' | 'error';
+type AppState = 'idle' | 'loading-model' | 'ready' | 'batch-analyzing' | 'error';
 
-/** フレーム送りの FPS（1ステップ = 1/FPS_STEP 秒） */
-const FPS_STEP = 10;
-/** 1フレーム送りに必要なドラッグピクセル数 */
-const PX_PER_FRAME = 15;
+/** フレーム送りの FPS（1ステップ = 1/STEP_FPS 秒） */
+const STEP_FPS = 1;
+/** ドラッグ何 px で 1 フレーム送り */
+const PX_PER_FRAME = 30;
 
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
@@ -22,47 +26,67 @@ export default function App() {
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showAngles, setShowAngles] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
+  const [showPhase, setShowPhase] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [videoDims, setVideoDims] = useState({ width: 640, height: 480 });
-  const [progress, setProgress] = useState(0); // 0~1
+  const [progress, setProgress] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [rotation, setRotation] = useState(0); // 度
+  const [rotation, setRotation] = useState(0);
+  const [currentPhaseLabel, setCurrentPhaseLabel] = useState('');
+  const [batchProgress, setBatchProgress] = useState(0); // 0~100
 
   const playerRef = useRef<VideoPlayerHandle>(null);
   const canvasRef = useRef<SkeletonCanvasHandle>(null);
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
+  const phaseCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  // キャッシュした解析結果（ブレ防止）
-  const cachedPoseRef = useRef<PoseResult | null>(null);
-  const dragAccumRef = useRef(0);
+  // 解析パイプライン
+  const smootherRef = useRef(new LandmarkSmoother(1.7, 0.01));
+  const interpolatorRef = useRef(new ConfidenceInterpolator(3));
+  const phaseDetectorRef = useRef(new SwingPhaseDetector());
 
-  /** drawFrame: skeleton + angles (グリッドは別キャンバス) */
-  const drawFrame = useCallback((poseResult: PoseResult | null) => {
+  // 全フレーム解析結果キャッシュ
+  const allFramesRef = useRef<(NormalizedLandmark[] | null)[]>([]);
+  const allPhasesRef = useRef<SwingPhase[]>([]);
+  const videoDurRef = useRef(0);
+  const cachedPoseRef = useRef<PoseResult | null>(null);
+
+  // ドラッグ時の基準時刻
+  const dragBaseTimeRef = useRef(0);
+
+  // ---------- drawFrame ----------
+  const drawFrame = useCallback((poseResult: PoseResult | null, phase?: SwingPhase) => {
     const ctx = canvasRef.current?.getContext();
     if (!ctx) return;
     const { width, height } = videoDims;
     ctx.clearRect(0, 0, width, height);
 
     if (poseResult) {
-      if (showSkeleton) {
-        drawSkeleton(ctx, poseResult.landmarks, width, height);
-      }
+      // smoother + interpolator
+      const ts = performance.now() / 1000;
+      const smoothed = smootherRef.current.smooth(poseResult.landmarks, ts);
+      interpolatorRef.current.push(smoothed);
+      const final = interpolatorRef.current.getCurrent() ?? smoothed;
+
+      if (showSkeleton) drawSkeleton(ctx, final, width, height);
       if (showAngles) {
-        const angles = calculateAngles(poseResult.landmarks);
+        const angles = calculateAngles(final);
         drawAngles(ctx, angles, width, height);
       }
+      if (showPhase && phase && phase !== 'unknown') {
+        drawPhaseLabel(ctx, phase, width);
+      }
     }
-  }, [videoDims, showSkeleton, showAngles]);
+  }, [videoDims, showSkeleton, showAngles, showPhase]);
 
-  /** グリッドを固定キャンバスに描画（回転・ズーム非連動） */
+  // ---------- Grid overlay ----------
   const drawGridOverlay = useCallback(() => {
     const canvas = gridCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    // CSS サイズに合わせてキャンバス解像度を更新
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     if (canvas.width !== w || canvas.height !== h) {
@@ -70,12 +94,28 @@ export default function App() {
       canvas.height = h;
     }
     ctx.clearRect(0, 0, w, h);
-    if (showGrid) {
-      drawGrid(ctx, w, h);
-    }
+    if (showGrid) drawGrid(ctx, w, h);
   }, [showGrid]);
 
-  /** モデル初期化 */
+  // ---------- Phase timeline overlay ----------
+  const drawPhaseTimelineOverlay = useCallback(() => {
+    const canvas = phaseCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    ctx.clearRect(0, 0, w, h);
+    if (showPhase && allPhasesRef.current.length > 0) {
+      drawPhaseTimeline(ctx, allPhasesRef.current, w, h, 0);
+    }
+  }, [showPhase]);
+
+  // ---------- Model ----------
   const loadModel = useCallback(async () => {
     if (isPoseDetectorReady()) return;
     setState('loading-model');
@@ -84,12 +124,56 @@ export default function App() {
       setState('ready');
     } catch (err) {
       console.error('Model loading failed:', err);
-      setErrorMsg('ポーズ検出モデルの読み込みに失敗しました。ブラウザがWebGLに対応しているか確認してください。');
+      setErrorMsg('ポーズ検出モデルの読み込みに失敗しました。');
       setState('error');
     }
   }, []);
 
-  /** 動画ファイル選択時 */
+  // ---------- 全フレーム一括解析 ----------
+  const batchAnalyze = useCallback(async () => {
+    const video = playerRef.current?.getVideoElement();
+    if (!video || !isPoseDetectorReady()) return;
+
+    setState('batch-analyzing');
+    const dur = video.duration;
+    videoDurRef.current = dur;
+    const step = 1 / STEP_FPS;
+    const totalFrames = Math.floor(dur * STEP_FPS);
+    const frames: (NormalizedLandmark[] | null)[] = [];
+
+    for (let i = 0; i <= totalFrames; i++) {
+      const t = Math.min(i * step, dur);
+      video.currentTime = t;
+      await new Promise<void>(resolve => {
+        const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+        video.addEventListener('seeked', onSeeked);
+      });
+      const result = detectPose(video);
+      frames.push(result?.landmarks ?? null);
+      setBatchProgress(Math.round((i / totalFrames) * 100));
+    }
+
+    allFramesRef.current = frames;
+
+    // スイングフェーズ検出
+    const validFrames = frames.map(f => f ?? []);
+    allPhasesRef.current = phaseDetectorRef.current.analyze(validFrames, STEP_FPS);
+
+    // 先頭に戻す
+    video.currentTime = 0;
+    setState('ready');
+    setBatchProgress(0);
+  }, []);
+
+  // ---------- curFrame から phase を引く ----------
+  const getPhaseForTime = useCallback((time: number): SwingPhase => {
+    const phases = allPhasesRef.current;
+    if (phases.length === 0) return 'unknown';
+    const idx = Math.round(time * STEP_FPS);
+    return phases[Math.max(0, Math.min(idx, phases.length - 1))];
+  }, []);
+
+  // ---------- File selected ----------
   const handleVideoSelected = useCallback((file: File) => {
     if (videoSrc) URL.revokeObjectURL(videoSrc);
     const url = URL.createObjectURL(file);
@@ -97,36 +181,44 @@ export default function App() {
     setState('idle');
     canvasRef.current?.clear();
     cachedPoseRef.current = null;
+    allFramesRef.current = [];
+    allPhasesRef.current = [];
+    smootherRef.current.reset();
+    interpolatorRef.current.reset();
     setZoom(1);
     setPanOffset({ x: 0, y: 0 });
     setRotation(0);
     setProgress(0);
+    setCurrentPhaseLabel('');
   }, [videoSrc]);
 
-  /** 動画メタデータ読み込み完了時（常に一時停止） */
+  // ---------- Video ready ----------
   const handleVideoReady = useCallback(async (video: HTMLVideoElement) => {
     setVideoDims({ width: video.videoWidth, height: video.videoHeight });
     video.pause();
     await loadModel();
-  }, [loadModel]);
+    // 自動で全フレーム一括解析を開始
+    setTimeout(() => batchAnalyze(), 100);
+  }, [loadModel, batchAnalyze]);
 
-  /** シーク完了時（1フレーム解析してキャッシュ） */
+  // ---------- Seeked ----------
   const handleSeeked = useCallback(() => {
     const video = playerRef.current?.getVideoElement();
     if (!video || !isPoseDetectorReady()) return;
 
     const result = detectPose(video);
-    if (result) {
-      cachedPoseRef.current = result;
-    }
-    drawFrame(cachedPoseRef.current);
-  }, [drawFrame]);
+    if (result) cachedPoseRef.current = result;
+
+    const phase = getPhaseForTime(video.currentTime);
+    setCurrentPhaseLabel(phase);
+    drawFrame(cachedPoseRef.current, phase);
+  }, [drawFrame, getPhaseForTime]);
 
   const handleTimeUpdate = useCallback((currentTime: number, duration: number) => {
     if (duration > 0) setProgress(currentTime / duration);
   }, []);
 
-  /** クリーンアップ */
+  // ---------- Cleanup ----------
   useEffect(() => {
     return () => {
       disposePoseDetector();
@@ -134,69 +226,69 @@ export default function App() {
     };
   }, [videoSrc]);
 
-  // 表示設定変更時、即反映
+  // 表示設定変更 → 再描画
   useEffect(() => {
-    drawFrame(cachedPoseRef.current);
-  }, [drawFrame]);
+    const phase = getPhaseForTime(playerRef.current?.getCurrentTime() ?? 0);
+    drawFrame(cachedPoseRef.current, phase);
+  }, [drawFrame, getPhaseForTime]);
 
-  // グリッド描画（showGrid 変更時＋ウインドウリサイズ時）
-  useEffect(() => {
-    drawGridOverlay();
-  }, [drawGridOverlay]);
+  useEffect(() => { drawGridOverlay(); }, [drawGridOverlay]);
+  useEffect(() => { drawPhaseTimelineOverlay(); }, [drawPhaseTimelineOverlay]);
 
   useEffect(() => {
-    const handleResize = () => drawGridOverlay();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [drawGridOverlay]);
+    const h = () => { drawGridOverlay(); drawPhaseTimelineOverlay(); };
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, [drawGridOverlay, drawPhaseTimelineOverlay]);
 
   // === タッチジェスチャー ===
-  /** 横ドラッグでフレーム送り（FPS_STEP 刻み） */
-  const handleHorizontalDrag = useCallback((deltaPx: number) => {
+
+  /**
+   * 横ドラッグ: 指を置いた位置からの累積 px で再生位置を決定。
+   * 1 FPS なので PX_PER_FRAME px = 1秒。
+   */
+  const handleHorizontalDrag = useCallback((totalDeltaPx: number) => {
     const dur = playerRef.current?.getDuration() ?? 0;
     if (dur === 0) return;
 
-    dragAccumRef.current += deltaPx;
-    const frameStep = 1 / FPS_STEP; // 0.1 sec
-    const framesAccum = Math.trunc(dragAccumRef.current / PX_PER_FRAME);
-    if (framesAccum !== 0) {
-      dragAccumRef.current -= framesAccum * PX_PER_FRAME;
-      const curTime = playerRef.current?.getCurrentTime() ?? 0;
-      const newTime = Math.max(0, Math.min(dur, curTime + framesAccum * frameStep));
-      playerRef.current?.seekTo(newTime);
+    // 初回ドラッグ時にベース時刻を記録
+    if (dragBaseTimeRef.current < 0) {
+      dragBaseTimeRef.current = playerRef.current?.getCurrentTime() ?? 0;
     }
+
+    const frameDelta = totalDeltaPx / PX_PER_FRAME;
+    const timeDelta = frameDelta / STEP_FPS;
+    const newTime = Math.max(0, Math.min(dur, dragBaseTimeRef.current + timeDelta));
+    playerRef.current?.seekTo(newTime);
   }, []);
 
+  const handleHorizontalDragEnd = useCallback(() => {
+    // 次のドラッグ開始時にベース時刻を再設定するためのフラグ
+    dragBaseTimeRef.current = -1;
+  }, []);
+
+  // 初期値を -1 にして最初の drag で currentTime を取得させる
+  useEffect(() => { dragBaseTimeRef.current = -1; }, [videoSrc]);
+
   const handlePinchZoom = useCallback((scale: number) => {
-    setZoom(prev => {
-      const next = prev * scale;
-      return Math.max(1, Math.min(5, next));
-    });
+    setZoom(prev => Math.max(0.5, Math.min(5, prev * scale)));
   }, []);
 
   useTouchGestures(viewportRef, {
     onHorizontalDrag: handleHorizontalDrag,
+    onHorizontalDragEnd: handleHorizontalDragEnd,
     onPinchZoom: handlePinchZoom,
   });
 
-  // 回転調整
-  const handleRotation = useCallback((delta: number) => {
-    setRotation(prev => prev + delta);
-  }, []);
-
-  // リセット
+  const handleRotation = useCallback((d: number) => setRotation(p => p + d), []);
   const handleResetTransform = useCallback(() => {
-    setZoom(1);
-    setPanOffset({ x: 0, y: 0 });
-    setRotation(0);
+    setZoom(1); setPanOffset({ x: 0, y: 0 }); setRotation(0);
   }, []);
 
   // ビューポート表示計算
-  const maxWidth = Math.min(videoDims.width, window.innerWidth);
-  const maxHeight = window.innerHeight - 120; // ヘッダー+ツールバー分
-  const scaleW = maxWidth / videoDims.width;
-  const scaleH = maxHeight / videoDims.height;
-  const baseScale = Math.min(scaleW, scaleH, 1);
+  const maxW = Math.min(videoDims.width, window.innerWidth);
+  const maxH = window.innerHeight - 140;
+  const baseScale = Math.min(maxW / videoDims.width, maxH / videoDims.height, 1);
   const displayWidth = Math.round(videoDims.width * baseScale);
   const displayHeight = Math.round(videoDims.height * baseScale);
 
@@ -224,11 +316,20 @@ export default function App() {
       {/* ========== 解析画面 ========== */}
       {videoSrc && (
         <div className="analysis-area">
-          {/* モデルローディング */}
-          {state === 'loading-model' && (
+          {/* モデル / バッチ解析ローディング */}
+          {(state === 'loading-model' || state === 'batch-analyzing') && (
             <div className="model-loading-overlay">
               <div className="spinner" />
-              <span>ポーズ検出モデルを読み込み中...</span>
+              <span>
+                {state === 'loading-model'
+                  ? 'ポーズ検出モデルを読み込み中...'
+                  : `全フレーム解析中... ${batchProgress}%`}
+              </span>
+              {state === 'batch-analyzing' && (
+                <div className="batch-progress-bar">
+                  <div className="batch-progress-fill" style={{ width: `${batchProgress}%` }} />
+                </div>
+              )}
             </div>
           )}
 
@@ -238,7 +339,6 @@ export default function App() {
             className="viewport"
             style={{ width: displayWidth, height: displayHeight }}
           >
-            {/* 回転・ズーム対象: 動画 + 骨格 */}
             <div
               className="viewport-transform"
               style={{
@@ -260,14 +360,13 @@ export default function App() {
               />
             </div>
 
-            {/* グリッド: 回転・ズームに連動しない固定オーバーレイ */}
-            <canvas
-              ref={gridCanvasRef}
-              className="grid-canvas"
-            />
+            {/* グリッド: 固定オーバーレイ */}
+            <canvas ref={gridCanvasRef} className="grid-canvas" />
 
-            {/* シークプログレスバー（常に表示、ズーム非連動） */}
+            {/* シークプログレスバー */}
             <div className="seek-progress-bar">
+              {/* フェーズタイムライン */}
+              <canvas ref={phaseCanvasRef} className="phase-timeline-canvas" />
               <div className="seek-progress-fill" style={{ width: `${progress * 100}%` }} />
               <input
                 type="range"
@@ -285,7 +384,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* ミニツールバー（ビューポート外・常に表示） */}
+          {/* ミニツールバー */}
           <div className="mini-toolbar">
             <div className="toolbar-row">
               <label className="toggle-chip">
@@ -300,16 +399,23 @@ export default function App() {
                 <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
                 グリッド
               </label>
+              <label className="toggle-chip">
+                <input type="checkbox" checked={showPhase} onChange={(e) => setShowPhase(e.target.checked)} />
+                フェーズ
+              </label>
 
               <span className="separator" />
 
-              {/* 回転 */}
-              <button className="icon-btn" onClick={() => handleRotation(-1)} title="左に1度回転">↶</button>
+              <button className="icon-btn" onClick={() => handleRotation(-1)} title="左回転">↶</button>
               <span className="rotation-display">{rotation}°</span>
-              <button className="icon-btn" onClick={() => handleRotation(1)} title="右に1度回転">↷</button>
+              <button className="icon-btn" onClick={() => handleRotation(1)} title="右回転">↷</button>
 
-              {zoom > 1 && (
+              {(zoom !== 1 || rotation !== 0) && (
                 <button className="icon-btn" onClick={handleResetTransform} title="リセット">⟲</button>
+              )}
+
+              {currentPhaseLabel && currentPhaseLabel !== 'unknown' && (
+                <span className="phase-chip">{currentPhaseLabel}</span>
               )}
             </div>
 
@@ -322,12 +428,19 @@ export default function App() {
                   setVideoSrc(null);
                   setState('idle');
                   cachedPoseRef.current = null;
+                  allFramesRef.current = [];
+                  allPhasesRef.current = [];
                 }}
               >
                 別の動画を選択
               </button>
+              {state === 'ready' && allPhasesRef.current.length === 0 && (
+                <button className="btn-upload-new" onClick={batchAnalyze}>
+                  フェーズ再解析
+                </button>
+              )}
               <span className="hint-text">
-                横スワイプでフレーム送り ・ ピンチでズーム
+                横ドラッグで1FPSフレーム送り ・ ピンチでズーム
               </span>
             </div>
           </div>

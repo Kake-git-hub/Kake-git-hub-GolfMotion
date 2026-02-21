@@ -44,6 +44,21 @@
   font-size: 1rem;
 }
 
+.batch-progress-bar {
+  width: 60%;
+  max-width: 300px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  background: #88ccff;
+  transition: width 0.2s linear;
+}
+
 .spinner {
   width: 24px;
   height: 24px;
@@ -164,9 +179,18 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 6px;
+  height: 10px;
   background: rgba(255, 255, 255, 0.15);
   z-index: 10;
+}
+
+.phase-timeline-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .seek-progress-fill {
@@ -309,6 +333,15 @@
 .hint-text {
   font-size: 0.7rem;
   color: #666;
+}
+
+.phase-chip {
+  font-size: 0.75rem;
+  color: #ffcc44;
+  background: rgba(255, 204, 68, 0.12);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
 }
 
 .btn-upload-new {
