@@ -9,46 +9,41 @@ import { drawGrid } from './services/gridRenderer';
 import { useTouchGestures } from './hooks/useTouchGestures';
 import './App.css';
 
-type AppState = 'idle' | 'loading-model' | 'ready' | 'analyzing' | 'error';
+type AppState = 'idle' | 'loading-model' | 'ready' | 'error';
+
+/** フレーム送りの FPS（1ステップ = 1/FPS_STEP 秒） */
+const FPS_STEP = 10;
+/** 1フレーム送りに必要なドラッグピクセル数 */
+const PX_PER_FRAME = 15;
 
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-  const [fps, setFps] = useState(0);
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showAngles, setShowAngles] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [videoDims, setVideoDims] = useState({ width: 640, height: 480 });
-  const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0); // 0~1
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0); // 度
-  const [speed, setSpeed] = useState(1);
 
   const playerRef = useRef<VideoPlayerHandle>(null);
   const canvasRef = useRef<SkeletonCanvasHandle>(null);
+  const gridCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const animFrameRef = useRef<number>(0);
-  const lastFpsTime = useRef(performance.now());
-  const frameCount = useRef(0);
-  const isPlayingRef = useRef(false);
 
-  // 一時停止時にキャッシュした解析結果（ブレ防止）
+  // キャッシュした解析結果（ブレ防止）
   const cachedPoseRef = useRef<PoseResult | null>(null);
-  const seekStartTimeRef = useRef(0);
+  const dragAccumRef = useRef(0);
 
-  /** drawFrame: 1フレーム分の描画 */
+  /** drawFrame: skeleton + angles (グリッドは別キャンバス) */
   const drawFrame = useCallback((poseResult: PoseResult | null) => {
     const ctx = canvasRef.current?.getContext();
     if (!ctx) return;
     const { width, height } = videoDims;
     ctx.clearRect(0, 0, width, height);
-
-    if (showGrid) {
-      drawGrid(ctx, width, height);
-    }
 
     if (poseResult) {
       if (showSkeleton) {
@@ -59,7 +54,26 @@ export default function App() {
         drawAngles(ctx, angles, width, height);
       }
     }
-  }, [videoDims, showSkeleton, showAngles, showGrid]);
+  }, [videoDims, showSkeleton, showAngles]);
+
+  /** グリッドを固定キャンバスに描画（回転・ズーム非連動） */
+  const drawGridOverlay = useCallback(() => {
+    const canvas = gridCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    // CSS サイズに合わせてキャンバス解像度を更新
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    ctx.clearRect(0, 0, w, h);
+    if (showGrid) {
+      drawGrid(ctx, w, h);
+    }
+  }, [showGrid]);
 
   /** モデル初期化 */
   const loadModel = useCallback(async () => {
@@ -75,28 +89,6 @@ export default function App() {
     }
   }, []);
 
-  /** 検出＋描画ループ（再生中のみ） */
-  const analysisLoop = useCallback(() => {
-    const video = playerRef.current?.getVideoElement();
-    if (video && video.readyState >= 2) {
-      const result = detectPose(video);
-      if (result) {
-        cachedPoseRef.current = result;
-      }
-      drawFrame(cachedPoseRef.current);
-
-      // FPS
-      frameCount.current++;
-      const now = performance.now();
-      if (now - lastFpsTime.current >= 1000) {
-        setFps(frameCount.current);
-        frameCount.current = 0;
-        lastFpsTime.current = now;
-      }
-    }
-    animFrameRef.current = requestAnimationFrame(analysisLoop);
-  }, [drawFrame]);
-
   /** 動画ファイル選択時 */
   const handleVideoSelected = useCallback((file: File) => {
     if (videoSrc) URL.revokeObjectURL(videoSrc);
@@ -111,30 +103,14 @@ export default function App() {
     setProgress(0);
   }, [videoSrc]);
 
-  /** 動画メタデータ読み込み完了時 */
+  /** 動画メタデータ読み込み完了時（常に一時停止） */
   const handleVideoReady = useCallback(async (video: HTMLVideoElement) => {
     setVideoDims({ width: video.videoWidth, height: video.videoHeight });
+    video.pause();
     await loadModel();
   }, [loadModel]);
 
-  const handlePlay = useCallback(() => {
-    isPlayingRef.current = true;
-    setPlaying(true);
-    setState('analyzing');
-    cancelAnimationFrame(animFrameRef.current);
-    animFrameRef.current = requestAnimationFrame(analysisLoop);
-  }, [analysisLoop]);
-
-  const handlePause = useCallback(() => {
-    isPlayingRef.current = false;
-    setPlaying(false);
-    setState('ready');
-    cancelAnimationFrame(animFrameRef.current);
-    // 一時停止時にキャッシュデータで一度描画（ブレ防止）
-    drawFrame(cachedPoseRef.current);
-  }, [drawFrame]);
-
-  /** シーク完了時（一時停止中でも1フレーム解析してキャッシュ）*/
+  /** シーク完了時（1フレーム解析してキャッシュ） */
   const handleSeeked = useCallback(() => {
     const video = playerRef.current?.getVideoElement();
     if (!video || !isPoseDetectorReady()) return;
@@ -153,38 +129,42 @@ export default function App() {
   /** クリーンアップ */
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(animFrameRef.current);
       disposePoseDetector();
       if (videoSrc) URL.revokeObjectURL(videoSrc);
     };
   }, [videoSrc]);
 
-  // 表示設定変更時、再生中ならループ更新
+  // 表示設定変更時、即反映
   useEffect(() => {
-    if (isPlayingRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = requestAnimationFrame(analysisLoop);
-    } else {
-      // 停止中でもグリッド等は即反映
-      drawFrame(cachedPoseRef.current);
-    }
-  }, [analysisLoop, drawFrame]);
+    drawFrame(cachedPoseRef.current);
+  }, [drawFrame]);
+
+  // グリッド描画（showGrid 変更時＋ウインドウリサイズ時）
+  useEffect(() => {
+    drawGridOverlay();
+  }, [drawGridOverlay]);
+
+  useEffect(() => {
+    const handleResize = () => drawGridOverlay();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [drawGridOverlay]);
 
   // === タッチジェスチャー ===
-  const handleTap = useCallback(() => {
-    playerRef.current?.togglePlay();
-  }, []);
-
-  const handleHorizontalSwipe = useCallback((deltaRatio: number) => {
+  /** 横ドラッグでフレーム送り（FPS_STEP 刻み） */
+  const handleHorizontalDrag = useCallback((deltaPx: number) => {
     const dur = playerRef.current?.getDuration() ?? 0;
     if (dur === 0) return;
-    // 画面幅いっぱいスワイプ = 動画全体の20%に相当
-    if (!seekStartTimeRef.current) {
-      seekStartTimeRef.current = playerRef.current?.getCurrentTime() ?? 0;
+
+    dragAccumRef.current += deltaPx;
+    const frameStep = 1 / FPS_STEP; // 0.1 sec
+    const framesAccum = Math.trunc(dragAccumRef.current / PX_PER_FRAME);
+    if (framesAccum !== 0) {
+      dragAccumRef.current -= framesAccum * PX_PER_FRAME;
+      const curTime = playerRef.current?.getCurrentTime() ?? 0;
+      const newTime = Math.max(0, Math.min(dur, curTime + framesAccum * frameStep));
+      playerRef.current?.seekTo(newTime);
     }
-    const seekDelta = deltaRatio * dur * 0.2;
-    const newTime = Math.max(0, Math.min(dur, seekStartTimeRef.current + seekDelta));
-    playerRef.current?.seekTo(newTime);
   }, []);
 
   const handlePinchZoom = useCallback((scale: number) => {
@@ -195,32 +175,9 @@ export default function App() {
   }, []);
 
   useTouchGestures(viewportRef, {
-    onTap: handleTap,
-    onHorizontalSwipe: handleHorizontalSwipe,
+    onHorizontalDrag: handleHorizontalDrag,
     onPinchZoom: handlePinchZoom,
   });
-
-  // マウスクリックで再生/一時停止 (PC用)
-  const handleViewportClick = useCallback((e: React.MouseEvent) => {
-    // ツールバー等のボタンからの伝播は無視
-    if ((e.target as HTMLElement).closest('.settings-panel, .seek-progress-bar, .mini-toolbar')) return;
-    playerRef.current?.togglePlay();
-  }, []);
-
-  // seekStart タイムスタンプリセット（touchend で呼ばれる）
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const resetSeek = () => { seekStartTimeRef.current = 0; };
-    el.addEventListener('touchend', resetSeek);
-    return () => el.removeEventListener('touchend', resetSeek);
-  }, []);
-
-  // 速度変更
-  const handleSpeedChange = useCallback((s: number) => {
-    setSpeed(s);
-    playerRef.current?.setSpeed(s);
-  }, []);
 
   // 回転調整
   const handleRotation = useCallback((delta: number) => {
@@ -280,8 +237,8 @@ export default function App() {
             ref={viewportRef}
             className="viewport"
             style={{ width: displayWidth, height: displayHeight }}
-            onClick={handleViewportClick}
           >
+            {/* 回転・ズーム対象: 動画 + 骨格 */}
             <div
               className="viewport-transform"
               style={{
@@ -293,8 +250,6 @@ export default function App() {
                 ref={playerRef}
                 src={videoSrc}
                 onReady={handleVideoReady}
-                onPlay={handlePlay}
-                onPause={handlePause}
                 onSeeked={handleSeeked}
                 onTimeUpdate={handleTimeUpdate}
               />
@@ -305,10 +260,11 @@ export default function App() {
               />
             </div>
 
-            {/* 再生/一時停止 インジケーター */}
-            {!playing && state !== 'loading-model' && state !== 'idle' && (
-              <div className="play-indicator">▶</div>
-            )}
+            {/* グリッド: 回転・ズームに連動しない固定オーバーレイ */}
+            <canvas
+              ref={gridCanvasRef}
+              className="grid-canvas"
+            />
 
             {/* シークプログレスバー（常に表示、ズーム非連動） */}
             <div className="seek-progress-bar">
@@ -347,21 +303,6 @@ export default function App() {
 
               <span className="separator" />
 
-              {/* 速度 */}
-              <div className="speed-chips">
-                {[0.25, 0.5, 1].map((s) => (
-                  <button
-                    key={s}
-                    className={`speed-chip ${speed === s ? 'active' : ''}`}
-                    onClick={() => handleSpeedChange(s)}
-                  >
-                    {s}x
-                  </button>
-                ))}
-              </div>
-
-              <span className="separator" />
-
               {/* 回転 */}
               <button className="icon-btn" onClick={() => handleRotation(-1)} title="左に1度回転">↶</button>
               <span className="rotation-display">{rotation}°</span>
@@ -370,17 +311,12 @@ export default function App() {
               {zoom > 1 && (
                 <button className="icon-btn" onClick={handleResetTransform} title="リセット">⟲</button>
               )}
-
-              {state === 'analyzing' && (
-                <span className="fps-chip">{fps} FPS</span>
-              )}
             </div>
 
             <div className="toolbar-row">
               <button
                 className="btn-upload-new"
                 onClick={() => {
-                  cancelAnimationFrame(animFrameRef.current);
                   canvasRef.current?.clear();
                   if (videoSrc) URL.revokeObjectURL(videoSrc);
                   setVideoSrc(null);
@@ -391,7 +327,7 @@ export default function App() {
                 別の動画を選択
               </button>
               <span className="hint-text">
-                タップで再生/停止 ・ 横スワイプでシーク
+                横スワイプでフレーム送り ・ ピンチでズーム
               </span>
             </div>
           </div>

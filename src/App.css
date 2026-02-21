@@ -147,22 +147,15 @@
   pointer-events: none;
 }
 
-/* ===== 再生インジケーター ===== */
-.play-indicator {
+/* グリッドキャンバス: 回転・ズームに連動しない固定オーバーレイ */
+.grid-canvas {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 48px;
-  color: rgba(255, 255, 255, 0.5);
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  animation: fade-in 0.2s ease;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  z-index: 5;
 }
 
 /* ===== シークプログレスバー（ビューポート下端: ズーム非連動） ===== */
