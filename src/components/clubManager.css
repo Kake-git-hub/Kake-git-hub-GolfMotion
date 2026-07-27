@@ -1,0 +1,218 @@
+/* ===== クラブセッティング画面 (ClubManager) ===== */
+
+.cm-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+/* ===== ヘッダー ===== */
+.cm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cm-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.cm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cm-count {
+  font-size: 0.8rem;
+  color: #88ccff;
+  background: rgba(136, 204, 255, 0.1);
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 14本以外の場合の注意色 */
+.cm-count-warn {
+  color: #ffcc44;
+  background: rgba(255, 204, 68, 0.12);
+}
+
+.cm-reset-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cm-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* ===== テーブル ===== */
+.cm-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.cm-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 980px;
+  font-size: 0.75rem;
+}
+
+.cm-th {
+  text-align: left;
+  padding: 6px 6px;
+  color: #88ccff;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #22223f;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* 1列目 (クラブ名) は横スクロール時も左に固定 */
+.cm-th-sticky {
+  left: 0;
+  z-index: 3;
+  min-width: 68px;
+}
+
+.cm-th-delete {
+  text-align: center;
+  min-width: 40px;
+}
+
+.cm-row:hover .cm-cell {
+  background: rgba(136, 204, 255, 0.05);
+}
+
+.cm-cell {
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+  min-width: 84px;
+}
+
+.cm-cell-numeric {
+  text-align: right;
+  min-width: 68px;
+}
+
+/* 1列目 (クラブ名) セル: 横スクロール時も左に固定 */
+.cm-cell-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #1e1e38;
+  min-width: 68px;
+}
+
+.cm-row:hover .cm-cell-sticky {
+  background: #23233f;
+}
+
+.cm-cell-delete {
+  text-align: center;
+  min-width: 40px;
+}
+
+/* ===== セル内 input ===== */
+.cm-input {
+  width: 100%;
+  min-width: 56px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  font-family: inherit;
+  padding: 2px 2px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.cm-input:focus {
+  border-bottom-color: #88ccff;
+}
+
+.cm-input-numeric {
+  text-align: right;
+  min-width: 48px;
+}
+
+/* ===== 削除ボタン (行末) ===== */
+.cm-delete-btn {
+  background: rgba(255, 90, 90, 0.1);
+  border: 1px solid rgba(255, 90, 90, 0.25);
+  border-radius: 6px;
+  color: #ff9999;
+  font-size: 0.7rem;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.cm-delete-btn:hover {
+  background: rgba(255, 90, 90, 0.28);
+  color: #fff;
+}
+
+/* ===== 追加ボタン ===== */
+.cm-add-btn {
+  align-self: flex-start;
+  background: rgba(136, 204, 255, 0.1);
+  border: 1px solid rgba(136, 204, 255, 0.3);
+  border-radius: 8px;
+  color: #88ccff;
+  font-size: 0.8rem;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cm-add-btn:hover {
+  background: rgba(136, 204, 255, 0.2);
+}
+
+/* ===== レスポンシブ ===== */
+@media (max-width: 768px) {
+  .cm-container {
+    padding: 4px;
+  }
+
+  .cm-title {
+    font-size: 0.95rem;
+  }
+
+  .cm-table {
+    font-size: 0.7rem;
+  }
+}

@@ -1,0 +1,329 @@
+/* =========================================================
+   P システム UI 共通スタイル
+   - ppt-* : PPointTimeline (P点マーカースライダー)
+   - ppg-* : PPointGallery  (P点分解写真ギャラリー)
+   既存のダークテーマ (#1a1a2e / アクセント #88ccff) に合わせる
+   ========================================================= */
+
+/* =========================================================
+   PPointTimeline
+   ========================================================= */
+
+.ppt-root {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  /* 左右 14px: 両端マーカー(幅28px)のはみ出し分を確保
+     下 18px: ドラッグ中の時刻バブル用 */
+  padding: 4px 14px 18px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ppt-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* トラック全体(上段=ラベル / 下段=バー) */
+.ppt-track {
+  position: relative;
+  width: 100%;
+  height: 60px;
+  touch-action: none;       /* スマホのスクロール/ズームを抑止 */
+  cursor: pointer;
+}
+
+/* 下段のトラックバー */
+.ppt-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+/* 現在時刻インジケータ(白い細線) */
+.ppt-playhead {
+  position: absolute;
+  top: 24px;
+  bottom: 4px;
+  width: 1px;
+  margin-left: -0.5px;
+  background: #ffffff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* 解析前のプレースホルダ */
+.ppt-empty {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #777777;
+  pointer-events: none;
+}
+
+/* --- マーカー --- */
+
+.ppt-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;              /* 指で掴めるよう 24px 以上を確保 */
+  margin-left: -14px;
+  touch-action: none;
+  cursor: grab;
+  z-index: 4;
+}
+
+.ppt-marker--dragging {
+  cursor: grabbing;
+  z-index: 6;
+}
+
+/* ラベルは偶数/奇数で上下2段に互い違い配置 */
+.ppt-marker-label {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--ppt-color, #88ccff);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ppt-marker--row0 .ppt-marker-label {
+  top: 1px;
+}
+
+.ppt-marker--row1 .ppt-marker-label {
+  top: 16px;
+}
+
+/* 縦線 */
+.ppt-marker-line {
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  bottom: 8px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--ppt-color, #88ccff);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* バー上のつまみ */
+.ppt-marker-knob {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--ppt-color, #88ccff);
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transition: width 0.12s ease, height 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* ドラッグ中は強調(拡大 + グロー) */
+.ppt-marker--dragging .ppt-marker-knob {
+  width: 18px;
+  height: 18px;
+  bottom: 4px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 12px -1px var(--ppt-color, #88ccff);
+}
+
+.ppt-marker--dragging .ppt-marker-line {
+  width: 3px;
+  box-shadow: 0 0 8px -1px var(--ppt-color, #88ccff);
+}
+
+.ppt-marker--dragging .ppt-marker-label {
+  font-size: 0.8rem;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+/* ドラッグ中の時刻バブル */
+.ppt-marker-time {
+  position: absolute;
+  left: 50%;
+  bottom: -17px;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--ppt-color, #88ccff);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* =========================================================
+   PPointGallery
+   ========================================================= */
+
+.ppg-root {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+}
+
+.ppg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ppg-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #dddddd;
+}
+
+.ppg-extract-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.ppg-extract-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #88ccff;
+  color: #ffffff;
+}
+
+.ppg-extract-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* デスクトップ: 5列×2行 */
+.ppg-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.ppg-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-top: 2px solid var(--ppg-color, #88ccff);   /* 上辺に P カラー */
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.ppg-card:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+/* 現在位置に対応する P 点を強調 */
+.ppg-card--active {
+  border-color: var(--ppg-color, #88ccff);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 1px var(--ppg-color, #88ccff), 0 0 10px -2px var(--ppg-color, #88ccff);
+}
+
+.ppg-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ppg-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+
+.ppg-thumb-placeholder {
+  font-size: 0.7rem;
+  color: #666666;
+}
+
+.ppg-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 3px 5px;
+}
+
+.ppg-label {
+  font-size: 0.7rem;
+  color: #cccccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ppg-time {
+  font-size: 0.7rem;
+  color: #88ccff;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   レスポンシブ (スマホ)
+   ========================================================= */
+
+@media (max-width: 768px) {
+  .ppt-root {
+    padding: 2px 14px 18px;
+  }
+
+  .ppg-root {
+    padding: 6px;
+  }
+
+  /* スマホ: 2列 */
+  .ppg-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

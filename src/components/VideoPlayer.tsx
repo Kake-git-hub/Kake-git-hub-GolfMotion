@@ -40,7 +40,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       togglePlay() {
         const v = videoRef.current;
         if (!v) return;
-        v.paused ? v.play() : v.pause();
+        if (v.paused) {
+          void v.play();
+        } else {
+          v.pause();
+        }
       },
       seekTo(time: number) {
         const v = videoRef.current;
