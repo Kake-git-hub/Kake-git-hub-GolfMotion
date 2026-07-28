@@ -485,6 +485,48 @@ function evenlySpaced(n: number, fps: number): PPoint[] {
 
 // ===== 公開 API =====
 
+/** スイング区間の粗い推定結果 */
+export interface SwingWindowEstimate {
+  /** 推定開始秒（動画全体に対する絶対時刻） */
+  startSec: number;
+  /** 推定終了秒（動画全体に対する絶対時刻） */
+  endSec: number;
+}
+
+/**
+ * 動画全体を低fpsで粗く解析した結果から、スイング区間のおおよその
+ * 開始/終了時刻を推定する。detectPPoints() を動画全体でなく該当区間
+ * だけに絞り込んで実行する（重い本解析の対象フレーム数を減らす）ための
+ * 前処理として使う。
+ *
+ * detectPPoints() の P1（アドレス＝静止区間の終わり）・P10（フィニッシュ
+ * ＝速度収束点）検出と同じロジックを、速度ピークフレームを基準にそのまま
+ * 再利用する。
+ *
+ * @param frames 粗いパスのランドマーク配列（index=フレーム番号、fps間隔）
+ * @param fps 粗いパスの fps
+ * @returns 推定開始/終了秒。判定不能な場合は動画全体 [0, duration] を返す
+ */
+export function estimateSwingWindow(
+  frames: (NormalizedLandmark[] | null)[],
+  fps: number,
+): SwingWindowEstimate {
+  const safeFps = normalizeFps(fps);
+  const n = Array.isArray(frames) ? frames.length : 0;
+  const durationSec = n > 0 ? (n - 1) / safeFps : 0;
+
+  if (n < 5) return { startSec: 0, endSec: durationSec };
+
+  const tr = buildTraces(frames, safeFps);
+  if (!tr.valid) return { startSec: 0, endSec: durationSec };
+
+  const speedPeakIdx = argmaxSpeed(tr.speed, n);
+  const startIdx = detectAddress(tr.speed, speedPeakIdx, safeFps);
+  const endIdx = detectFinish(tr.speed, speedPeakIdx, n, safeFps);
+
+  return { startSec: startIdx / safeFps, endSec: endIdx / safeFps };
+}
+
 /**
  * 全フレームのランドマークから P1〜P10 の位置を検出する。
  *

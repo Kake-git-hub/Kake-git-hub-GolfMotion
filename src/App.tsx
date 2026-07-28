@@ -5,29 +5,39 @@ import SkeletonCanvas, { type SkeletonCanvasHandle } from './components/Skeleton
 import PPointTimeline from './components/PPointTimeline';
 import PPointGallery from './components/PPointGallery';
 import ClubManager from './components/ClubManager';
+import RecordHistory from './components/RecordHistory';
 import { initPoseDetector, detectPose, disposePoseDetector, isPoseDetectorReady, type PoseResult } from './services/poseDetector';
 import { drawSkeleton } from './services/skeletonRenderer';
 import { calculateAngles, drawAngles } from './services/angleCalculator';
 import { drawGrid } from './services/gridRenderer';
 import { LandmarkSmoother } from './services/landmarkSmoother';
 import { ConfidenceInterpolator } from './services/confidenceInterpolator';
-import { SwingPhaseDetector, drawPhaseLabel, drawPhaseTimeline, getPhaseInfo, type SwingPhase } from './services/swingPhaseDetector';
-import { detectPPoints } from './services/pPositionDetector';
+import { detectPPoints, estimateSwingWindow } from './services/pPositionDetector';
 import { extractFramesAt, extractFrameAt, seekAndWait } from './services/frameExtractor';
-import { loadClubs } from './services/clubStore';
+import { getMainSet } from './services/clubSetStore';
+import { saveRecord } from './services/recordStore';
 import { useTouchGestures } from './hooks/useTouchGestures';
-import type { PPoint, PPointId, PPointFrame } from './types/ppoint';
+import { P_POINT_IDS, P_POINT_INFO, type PPoint, type PPointId, type PPointFrame } from './types/ppoint';
 import type { Club } from './types/club';
+import type { SwingRecord } from './types/record';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import './App.css';
 
 type AppState = 'idle' | 'loading-model' | 'ready' | 'batch-analyzing' | 'error';
-type AppView = 'analysis' | 'clubs';
+type AppView = 'analysis' | 'clubs' | 'history';
+/** バッチ解析の3段階: 粗いスキャン → 窓内本解析 → P点フレーム切り出し */
+type BatchStage = 'scan' | 'pose' | 'extract';
 
-/** バッチ解析の目標 FPS（ダウンスイングは約0.25秒しかないため、P5/P6/P7 の分解能確保に 20fps） */
+/** 粗いスキャンの目標 FPS（スイング区間の大まかな検出用） */
+const COARSE_FPS = 5;
+/** 粗いスキャンの最大フレーム数（長尺動画でも安全に収める） */
+const MAX_COARSE_FRAMES = 200;
+/** 本解析の目標 FPS（ダウンスイングは約0.25秒しかないため 20fps） */
 const ANALYSIS_FPS = 20;
-/** バッチ解析の最大フレーム数（長尺動画では FPS を自動的に落とす） */
-const MAX_ANALYSIS_FRAMES = 600;
+/** スイング区間推定の前後に足すパディング（秒） */
+const WINDOW_PAD_SEC = 1;
+/** 本解析窓の最大フレーム数（安全弁） */
+const MAX_WINDOW_FRAMES = 400;
 /** ドラッグ何 px で 1 フレーム送り */
 const PX_PER_FRAME = 30;
 /** 使用クラブ選択の保存キー */
@@ -40,7 +50,6 @@ export default function App() {
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showAngles, setShowAngles] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [showPhase, setShowPhase] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [videoDims, setVideoDims] = useState({ width: 640, height: 480 });
   const [progress, setProgress] = useState(0);
@@ -49,15 +58,18 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
-  const [currentPhase, setCurrentPhase] = useState<SwingPhase>('unknown');
-  const [batchProgress, setBatchProgress] = useState(0); // 0~100
-  const [batchStage, setBatchStage] = useState<'pose' | 'extract'>('pose');
+  const [batchProgress, setBatchProgress] = useState(0); // 0~100 (各ステージ毎)
+  const [batchStage, setBatchStage] = useState<BatchStage>('scan');
 
   // P システム
   const [pPoints, setPPoints] = useState<PPoint[]>([]);
   const [pFrames, setPFrames] = useState<PPointFrame[]>([]);
   const [extracting, setExtracting] = useState(false);
+  /** 現在の再生位置に最も近い P 点（ギャラリーのハイライト用） */
   const [activePId, setActivePId] = useState<PPointId | null>(null);
+  /** タイムラインで編集対象として選択中の P 点（null = P0 = 未選択） */
+  const [selectedPId, setSelectedPId] = useState<PPointId | null>(null);
+  const [saveMessage, setSaveMessage] = useState('');
 
   // クラブ
   const [clubs, setClubs] = useState<Club[]>([]);
@@ -68,37 +80,50 @@ export default function App() {
   const playerRef = useRef<VideoPlayerHandle>(null);
   const canvasRef = useRef<SkeletonCanvasHandle>(null);
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
-  const phaseCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   // 解析パイプライン
   const smootherRef = useRef(new LandmarkSmoother(1.7, 0.01));
   const interpolatorRef = useRef(new ConfidenceInterpolator(3));
-  const phaseDetectorRef = useRef(new SwingPhaseDetector());
 
-  // 全フレーム解析結果キャッシュ
+  // 窓内フレーム解析結果キャッシュ（index はウィンドウ先頭からの相対フレーム番号）
   const allFramesRef = useRef<(NormalizedLandmark[] | null)[]>([]);
-  const allPhasesRef = useRef<SwingPhase[]>([]);
-  const videoDurRef = useRef(0);
+  /** 解析ウィンドウの絶対開始/終了時刻（秒） */
+  const windowStartRef = useRef(0);
+  const windowEndRef = useRef(0);
   const cachedPoseRef = useRef<PoseResult | null>(null);
-  /** 実際に使用したバッチ解析 FPS（長尺動画では ANALYSIS_FPS より低くなる） */
+  /** 実際に使用した本解析 FPS */
   const analysisFpsRef = useRef(ANALYSIS_FPS);
   const pPointsRef = useRef<PPoint[]>([]);
-  /** 一括切り出し中は seeked ハンドラの再解析を抑止する */
+  const selectedPIdRef = useRef<PPointId | null>(null);
+  /** 一括処理中は seeked ハンドラの再解析を抑止する */
   const suppressSeekRef = useRef(false);
 
   // ドラッグ時の基準時刻
   const dragBaseTimeRef = useRef(0);
 
+  // ---------- 窓内キャッシュからランドマークを引く（ライブ推論を避けて遅延を防ぐ） ----------
+  const lookupCachedLandmarks = useCallback((timeSec: number): NormalizedLandmark[] | null => {
+    const frames = allFramesRef.current;
+    if (frames.length === 0) return null;
+    const fps = analysisFpsRef.current;
+    const buffer = 1 / Math.max(fps, 1);
+    if (timeSec < windowStartRef.current - buffer || timeSec > windowEndRef.current + buffer) {
+      return null; // 解析ウィンドウ外 → キャッシュなし（呼び出し側でライブ推論にフォールバック）
+    }
+    const idx = Math.round((timeSec - windowStartRef.current) * fps);
+    const clamped = Math.max(0, Math.min(frames.length - 1, idx));
+    return frames[clamped] ?? null;
+  }, []);
+
   // ---------- drawFrame ----------
-  const drawFrame = useCallback((poseResult: PoseResult | null, phase?: SwingPhase) => {
+  const drawFrame = useCallback((poseResult: PoseResult | null, pLabel?: PPointId | null) => {
     const ctx = canvasRef.current?.getContext();
     if (!ctx) return;
     const { width, height } = videoDims;
     ctx.clearRect(0, 0, width, height);
 
     if (poseResult) {
-      // smoother + interpolator
       const ts = performance.now() / 1000;
       const smoothed = smootherRef.current.smooth(poseResult.landmarks, ts);
       interpolatorRef.current.push(smoothed);
@@ -109,11 +134,29 @@ export default function App() {
         const angles = calculateAngles(final);
         drawAngles(ctx, angles, width, height);
       }
-      if (showPhase && phase && phase !== 'unknown') {
-        drawPhaseLabel(ctx, phase, width);
-      }
     }
-  }, [videoDims, showSkeleton, showAngles, showPhase]);
+
+    if (pLabel) {
+      const info = P_POINT_INFO[pLabel];
+      const text = info.label;
+      ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const metrics = ctx.measureText(text);
+      const padX = 10;
+      const padY = 6;
+      const bgW = metrics.width + padX * 2;
+      const bgH = 20 + padY * 2;
+      const cx = width / 2;
+      const cy = 10;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(cx - bgW / 2, cy, bgW, bgH, 6);
+      ctx.fill();
+      ctx.fillStyle = info.color;
+      ctx.fillText(text, cx, cy + padY);
+    }
+  }, [videoDims, showSkeleton, showAngles]);
 
   // ---------- Grid overlay ----------
   const drawGridOverlay = useCallback(() => {
@@ -131,24 +174,6 @@ export default function App() {
     if (showGrid) drawGrid(ctx, w, h);
   }, [showGrid]);
 
-  // ---------- Phase timeline overlay ----------
-  const drawPhaseTimelineOverlay = useCallback(() => {
-    const canvas = phaseCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
-    ctx.clearRect(0, 0, w, h);
-    if (showPhase && allPhasesRef.current.length > 0) {
-      drawPhaseTimeline(ctx, allPhasesRef.current, w, h, 0);
-    }
-  }, [showPhase]);
-
   // ---------- Model ----------
   const loadModel = useCallback(async () => {
     if (isPoseDetectorReady()) return;
@@ -163,92 +188,109 @@ export default function App() {
     }
   }, []);
 
-  // ---------- P点フレーム一括切り出し ----------
+  // ---------- P点フレーム一括切り出し（骨格・角度を焼き込む） ----------
   const extractAllPFrames = useCallback(async (pts: PPoint[]) => {
     const video = playerRef.current?.getVideoElement();
     if (!video || pts.length === 0) return;
     setExtracting(true);
     setBatchStage('extract');
+    setBatchProgress(0);
     suppressSeekRef.current = true;
     try {
+      const landmarksList = pts.map(p => lookupCachedLandmarks(p.timeSec));
       const urls = await extractFramesAt(
         video,
         pts.map(p => p.timeSec),
         (done, total) => setBatchProgress(Math.round((done / total) * 100)),
+        undefined,
+        landmarksList,
       );
       setPFrames(pts.map((p, i) => ({ id: p.id, timeSec: p.timeSec, imageUrl: urls[i] })));
     } finally {
       suppressSeekRef.current = false;
       setExtracting(false);
     }
-  }, []);
+  }, [lookupCachedLandmarks]);
 
-  // ---------- 全フレーム一括解析 ----------
+  // ---------- 2段階バッチ解析: 粗いスキャン → スイング窓の推定 → 窓内のみ本解析 ----------
   const batchAnalyze = useCallback(async () => {
     const video = playerRef.current?.getVideoElement();
     if (!video || !isPoseDetectorReady()) return;
 
     setState('batch-analyzing');
-    setBatchStage('pose');
     const dur = video.duration;
-    videoDurRef.current = dur;
-    // 長尺動画では FPS を落として最大フレーム数に収める
-    const fps = Math.min(ANALYSIS_FPS, Math.max(1, MAX_ANALYSIS_FRAMES / Math.max(dur, 0.1)));
-    analysisFpsRef.current = fps;
-    const step = 1 / fps;
-    const totalFrames = Math.floor(dur * fps);
-    const frames: (NormalizedLandmark[] | null)[] = [];
 
     suppressSeekRef.current = true;
     try {
+      // --- ステージ1: 粗いスキャンでスイング区間を推定 ---
+      setBatchStage('scan');
+      setBatchProgress(0);
+      const coarseFps = Math.min(COARSE_FPS, Math.max(1, MAX_COARSE_FRAMES / Math.max(dur, 0.1)));
+      const coarseStep = 1 / coarseFps;
+      const coarseTotal = Math.max(1, Math.floor(dur * coarseFps));
+      const coarseFrames: (NormalizedLandmark[] | null)[] = [];
+
+      for (let i = 0; i <= coarseTotal; i++) {
+        const t = Math.min(i * coarseStep, dur);
+        await seekAndWait(video, t);
+        const result = detectPose(video);
+        coarseFrames.push(result?.landmarks ?? null);
+        setBatchProgress(Math.round((i / coarseTotal) * 100));
+      }
+
+      const estimate = estimateSwingWindow(coarseFrames, coarseFps);
+      const windowStart = Math.max(0, estimate.startSec - WINDOW_PAD_SEC);
+      const windowEnd = Math.min(dur, estimate.endSec + WINDOW_PAD_SEC);
+      windowStartRef.current = windowStart;
+      windowEndRef.current = windowEnd;
+
+      // --- ステージ2: 窓内のみ 20fps で本解析（処理を軽くする） ---
+      setBatchStage('pose');
+      setBatchProgress(0);
+      const windowDur = Math.max(windowEnd - windowStart, 0.1);
+      const fps = Math.min(ANALYSIS_FPS, Math.max(1, MAX_WINDOW_FRAMES / windowDur));
+      analysisFpsRef.current = fps;
+      const step = 1 / fps;
+      const totalFrames = Math.max(1, Math.floor(windowDur * fps));
+      const frames: (NormalizedLandmark[] | null)[] = [];
+
       for (let i = 0; i <= totalFrames; i++) {
-        const t = Math.min(i * step, dur);
+        const t = Math.min(windowStart + i * step, windowEnd);
         await seekAndWait(video, t);
         const result = detectPose(video);
         frames.push(result?.landmarks ?? null);
         setBatchProgress(Math.round((i / totalFrames) * 100));
       }
+
+      allFramesRef.current = frames;
+
+      // P1〜P10 自動検出（窓内の相対フレームで検出し、絶対時刻へオフセット）
+      const relPts = detectPPoints(frames, fps);
+      const pts = relPts.map(p => ({ ...p, timeSec: p.timeSec + windowStart }));
+      pPointsRef.current = pts;
+      setPPoints(pts);
+      setSelectedPId(null);
+      selectedPIdRef.current = null;
+      setActivePId(null);
+
+      // P点のフレーム写真を一括切り出し
+      await extractAllPFrames(pts);
+
+      // P1 (アドレス) へシーク
+      const startT = pts[0]?.timeSec ?? windowStart;
+      video.currentTime = startT;
+      setCurrentTime(startT);
     } finally {
       suppressSeekRef.current = false;
     }
-
-    allFramesRef.current = frames;
-
-    // スイングフェーズ検出
-    const validFrames = frames.map(f => f ?? []);
-    allPhasesRef.current = phaseDetectorRef.current.analyze(validFrames, fps);
-
-    // P1〜P10 自動検出
-    const pts = detectPPoints(frames, fps);
-    pPointsRef.current = pts;
-    setPPoints(pts);
-
-    // P点のフレーム写真を一括切り出し
-    await extractAllPFrames(pts);
-
-    // P1 (アドレス) へシーク
-    const startT = pts[0]?.timeSec ?? 0;
-    video.currentTime = startT;
     setState('ready');
     setBatchProgress(0);
   }, [extractAllPFrames]);
 
-  // ---------- curFrame から phase を引く ----------
-  const getPhaseForTime = useCallback((time: number): SwingPhase => {
-    const phases = allPhasesRef.current;
-    if (phases.length === 0) return 'unknown';
-    const idx = Math.round(time * analysisFpsRef.current);
-    return phases[Math.max(0, Math.min(idx, phases.length - 1))];
-  }, []);
-
-  // ---------- 現在時刻に対応する P 点を求める ----------
-  const updateActivePForTime = useCallback((time: number) => {
+  // ---------- 現在時刻に最も近い P 点を求める（純関数、state 非依存） ----------
+  const findNearestPId = useCallback((time: number): PPointId | null => {
     const pts = pPointsRef.current;
-    if (pts.length === 0) {
-      setActivePId(null);
-      return;
-    }
-    // 半フレーム + α を許容範囲とする
+    if (pts.length === 0) return null;
     const tol = Math.max(0.5 / analysisFpsRef.current, 0.08);
     let best: PPointId | null = null;
     let bestD = tol;
@@ -259,7 +301,7 @@ export default function App() {
         best = p.id;
       }
     }
-    setActivePId(best);
+    return best;
   }, []);
 
   // ---------- File selected ----------
@@ -271,11 +313,15 @@ export default function App() {
     canvasRef.current?.clear();
     cachedPoseRef.current = null;
     allFramesRef.current = [];
-    allPhasesRef.current = [];
+    windowStartRef.current = 0;
+    windowEndRef.current = 0;
     pPointsRef.current = [];
+    selectedPIdRef.current = null;
     setPPoints([]);
     setPFrames([]);
     setActivePId(null);
+    setSelectedPId(null);
+    setSaveMessage('');
     smootherRef.current.reset();
     interpolatorRef.current.reset();
     setZoom(1);
@@ -284,17 +330,14 @@ export default function App() {
     setProgress(0);
     setCurrentTime(0);
     setDuration(0);
-    setCurrentPhase('unknown');
   }, [videoSrc]);
 
   // ---------- Video ready ----------
   const handleVideoReady = useCallback(async (video: HTMLVideoElement) => {
     setVideoDims({ width: video.videoWidth, height: video.videoHeight });
     setDuration(video.duration);
-    videoDurRef.current = video.duration;
     video.pause();
     await loadModel();
-    // モデル読み込み完了後に全フレーム一括解析を開始
     if (isPoseDetectorReady()) {
       await batchAnalyze();
     }
@@ -303,18 +346,23 @@ export default function App() {
   // ---------- Seeked ----------
   const handleSeeked = useCallback(() => {
     const video = playerRef.current?.getVideoElement();
-    if (!video || !isPoseDetectorReady()) return;
-    if (suppressSeekRef.current) return;  // 一括処理中はスキップ
+    if (!video) return;
+    if (suppressSeekRef.current) return; // 一括処理中はスキップ
 
-    const result = detectPose(video);
-    if (result) cachedPoseRef.current = result;
+    const t = video.currentTime;
+    let landmarks = lookupCachedLandmarks(t);
+    if (!landmarks && isPoseDetectorReady()) {
+      // 解析ウィンドウ外への手動シークなど: ライブ推論にフォールバック
+      const result = detectPose(video);
+      landmarks = result?.landmarks ?? null;
+    }
+    cachedPoseRef.current = landmarks ? { landmarks, worldLandmarks: [] } : null;
 
-    const phase = getPhaseForTime(video.currentTime);
-    setCurrentPhase(phase);
-    setCurrentTime(video.currentTime);
-    updateActivePForTime(video.currentTime);
-    drawFrame(cachedPoseRef.current, phase);
-  }, [drawFrame, getPhaseForTime, updateActivePForTime]);
+    const nearP = findNearestPId(t);
+    setActivePId(nearP);
+    setCurrentTime(t);
+    drawFrame(cachedPoseRef.current, nearP);
+  }, [drawFrame, findNearestPId, lookupCachedLandmarks]);
 
   const handleTimeUpdate = useCallback((time: number, dur: number) => {
     if (dur > 0) setProgress(time / dur);
@@ -331,22 +379,21 @@ export default function App() {
 
   // 表示設定変更 → 再描画
   useEffect(() => {
-    const phase = getPhaseForTime(playerRef.current?.getCurrentTime() ?? 0);
-    drawFrame(cachedPoseRef.current, phase);
-  }, [drawFrame, getPhaseForTime]);
+    const t = playerRef.current?.getCurrentTime() ?? 0;
+    drawFrame(cachedPoseRef.current, findNearestPId(t));
+  }, [drawFrame, findNearestPId]);
 
   useEffect(() => { drawGridOverlay(); }, [drawGridOverlay, view]);
-  useEffect(() => { drawPhaseTimelineOverlay(); }, [drawPhaseTimelineOverlay, view]);
 
   useEffect(() => {
-    const h = () => { drawGridOverlay(); drawPhaseTimelineOverlay(); };
+    const h = () => drawGridOverlay();
     window.addEventListener('resize', h);
     return () => window.removeEventListener('resize', h);
-  }, [drawGridOverlay, drawPhaseTimelineOverlay]);
+  }, [drawGridOverlay]);
 
-  // クラブ一覧: 解析ビュー表示時に再読込（クラブ設定タブでの編集を反映）
+  // クラブ一覧: 解析ビュー表示時にメインセットを再読込（クラブ設定タブでの編集を反映）
   useEffect(() => {
-    if (view === 'analysis') setClubs(loadClubs());
+    if (view === 'analysis') setClubs(getMainSet()?.clubs ?? []);
   }, [view]);
 
   const handleClubSelect = useCallback((id: string) => {
@@ -358,40 +405,92 @@ export default function App() {
 
   const selectedClub = clubs.find(c => c.id === selectedClubId) ?? null;
 
-  // === P点タイムライン操作 ===
+  // === P点選択（P0 起点のステップ選択） ===
+
+  /** 指定の P 点を選択（null で選択解除=P0）。選択時はその時刻へシークする */
+  const selectP = useCallback((id: PPointId | null) => {
+    selectedPIdRef.current = id;
+    setSelectedPId(id);
+    if (id) {
+      const p = pPointsRef.current.find(x => x.id === id);
+      if (p) playerRef.current?.seekTo(p.timeSec);
+    }
+  }, []);
+
+  /** P0 ⇄ P1 ⇄ P2 ⇄ ... ⇄ P10 を左右で1段ずつ移動（両端はクランプ） */
+  const stepSelectedP = useCallback((dir: 'next' | 'prev') => {
+    const prev = selectedPIdRef.current;
+    let next: PPointId | null;
+    if (prev === null) {
+      next = dir === 'next' ? 'P1' : 'P10';
+    } else {
+      const idx = P_POINT_IDS.indexOf(prev);
+      if (dir === 'next') {
+        next = idx >= P_POINT_IDS.length - 1 ? prev : P_POINT_IDS[idx + 1];
+      } else {
+        next = idx <= 0 ? null : P_POINT_IDS[idx - 1];
+      }
+    }
+    selectP(next);
+  }, [selectP]);
+
+  /** 動画タップ: 左1/3=前のP点、右1/3=次のP点、中央=選択解除(P0) */
+  const handleViewportTap = useCallback((clientX: number) => {
+    if (pPointsRef.current.length === 0) return; // 解析前は無効
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const ratio = (clientX - rect.left) / rect.width;
+    if (ratio < 1 / 3) stepSelectedP('prev');
+    else if (ratio > 2 / 3) stepSelectedP('next');
+    else selectP(null);
+  }, [stepSelectedP, selectP]);
 
   /** マーカードラッグ中: P点位置を更新しつつライブプレビュー */
   const handleMarkerDrag = useCallback((id: PPointId, timeSec: number) => {
     const fps = analysisFpsRef.current;
+    const winStart = windowStartRef.current;
     const update = (prev: PPoint[]) =>
-      prev.map(p => p.id === id ? { ...p, timeSec, frameIndex: Math.round(timeSec * fps) } : p);
+      prev.map(p => p.id === id ? { ...p, timeSec, frameIndex: Math.round((timeSec - winStart) * fps) } : p);
     pPointsRef.current = update(pPointsRef.current);
     setPPoints(update);
     playerRef.current?.seekTo(timeSec);
   }, []);
 
-  /** マーカードラッグ確定: そのP点のフレーム写真を再取得 */
+  /** マーカードラッグ確定: そのP点のフレーム写真を再取得（骨格焼き込み込み） */
   const handleMarkerDragEnd = useCallback(async (id: PPointId, timeSec: number) => {
     handleMarkerDrag(id, timeSec);
-    setActivePId(id);
     const video = playerRef.current?.getVideoElement();
     if (!video) return;
-    const url = await extractFrameAt(video, timeSec);
+    const overlay = lookupCachedLandmarks(timeSec);
+    const url = await extractFrameAt(video, timeSec, undefined, overlay);
     setPFrames(prev => prev.map(f => f.id === id ? { ...f, timeSec, imageUrl: url } : f));
-  }, [handleMarkerDrag]);
+  }, [handleMarkerDrag, lookupCachedLandmarks]);
 
-  /** ギャラリーのカードタップ → そのP点へシーク */
+  /** ギャラリーのカードタップ → 選択トグル（同じカードなら選択解除） */
   const handleGallerySelect = useCallback((id: PPointId) => {
-    const p = pPointsRef.current.find(x => x.id === id);
-    if (!p) return;
-    setActivePId(id);
-    playerRef.current?.seekTo(p.timeSec);
-  }, []);
+    selectP(selectedPIdRef.current === id ? null : id);
+  }, [selectP]);
 
   /** 10枚一括再切り出し */
   const handleExtractAll = useCallback(() => {
     void extractAllPFrames(pPointsRef.current);
   }, [extractAllPFrames]);
+
+  /** 現在の10枚+使用クラブを記録として保存 */
+  const handleSaveRecord = useCallback(() => {
+    if (pFrames.length !== 10 || pFrames.some(f => !f.imageUrl)) return;
+    const record: SwingRecord = {
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      clubId: selectedClub?.id ?? null,
+      clubName: selectedClub?.name ?? '',
+      clubHead: selectedClub?.head ?? '',
+      frames: pFrames.map(f => ({ id: f.id, timeSec: f.timeSec, imageUrl: f.imageUrl as string })),
+    };
+    saveRecord(record);
+    setSaveMessage('保存しました');
+    window.setTimeout(() => setSaveMessage(''), 2500);
+  }, [pFrames, selectedClub]);
 
   // === タッチジェスチャー ===
 
@@ -403,7 +502,6 @@ export default function App() {
     const dur = playerRef.current?.getDuration() ?? 0;
     if (dur === 0) return;
 
-    // 初回ドラッグ時にベース時刻を記録
     if (dragBaseTimeRef.current < 0) {
       dragBaseTimeRef.current = playerRef.current?.getCurrentTime() ?? 0;
     }
@@ -415,11 +513,9 @@ export default function App() {
   }, []);
 
   const handleHorizontalDragEnd = useCallback(() => {
-    // 次のドラッグ開始時にベース時刻を再設定するためのフラグ
     dragBaseTimeRef.current = -1;
   }, []);
 
-  // 初期値を -1 にして最初の drag で currentTime を取得させる
   useEffect(() => { dragBaseTimeRef.current = -1; }, [videoSrc]);
 
   const handlePinchZoom = useCallback((scale: number) => {
@@ -430,7 +526,8 @@ export default function App() {
     onHorizontalDrag: handleHorizontalDrag,
     onHorizontalDragEnd: handleHorizontalDragEnd,
     onPinchZoom: handlePinchZoom,
-  });
+    onTap: (x) => handleViewportTap(x),
+  }, videoSrc);
 
   const handleRotation = useCallback((d: number) => setRotation(p => p + d), []);
   const handleResetTransform = useCallback(() => {
@@ -443,6 +540,8 @@ export default function App() {
   const baseScale = Math.min(maxW / videoDims.width, maxH / videoDims.height, 1);
   const displayWidth = Math.round(videoDims.width * baseScale);
   const displayHeight = Math.round(videoDims.height * baseScale);
+
+  const canSave = pFrames.length === 10 && pFrames.every(f => f.imageUrl) && state === 'ready';
 
   return (
     <div className="app">
@@ -460,10 +559,19 @@ export default function App() {
         >
           🏌️ クラブ設定
         </button>
+        <button
+          className={`tab-btn ${view === 'history' ? 'active' : ''}`}
+          onClick={() => setView('history')}
+        >
+          📋 記録
+        </button>
       </nav>
 
       {/* ========== クラブ設定ビュー ========== */}
       {view === 'clubs' && <ClubManager />}
+
+      {/* ========== 記録ビュー ========== */}
+      {view === 'history' && <RecordHistory />}
 
       {/* ========== 解析ビュー（動画状態保持のため display 切替） ========== */}
       <div style={{ display: view === 'analysis' ? 'contents' : 'none' }}>
@@ -496,9 +604,11 @@ export default function App() {
                 <span>
                   {state === 'loading-model'
                     ? 'ポーズ検出モデルを読み込み中...'
-                    : batchStage === 'pose'
-                      ? `全フレーム解析中... ${batchProgress}%`
-                      : `P点フレーム切り出し中... ${batchProgress}%`}
+                    : batchStage === 'scan'
+                      ? `スイング区間を推定中... ${batchProgress}%`
+                      : batchStage === 'pose'
+                        ? `詳細解析中... ${batchProgress}%`
+                        : `P点フレーム切り出し中... ${batchProgress}%`}
                 </span>
                 {state === 'batch-analyzing' && (
                   <div className="batch-progress-bar">
@@ -508,7 +618,7 @@ export default function App() {
               </div>
             )}
 
-            {/* ビューポート */}
+            {/* ビューポート（左/右/中央タップでP点切替・選択解除） */}
             <div
               ref={viewportRef}
               className="viewport"
@@ -540,8 +650,6 @@ export default function App() {
 
               {/* シークプログレスバー */}
               <div className="seek-progress-bar">
-                {/* フェーズタイムライン */}
-                <canvas ref={phaseCanvasRef} className="phase-timeline-canvas" />
                 <div className="seek-progress-fill" style={{ width: `${progress * 100}%` }} />
                 <input
                   type="range"
@@ -559,11 +667,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* P点タイムライン（ビデオ編集風マーカースライダー） */}
+            {/* P点タイムライン（選択中の1点のみ操作可能なマーカーとして表示） */}
             <PPointTimeline
               pPoints={pPoints}
               duration={duration}
               currentTime={currentTime}
+              selectedId={selectedPId}
               onSeek={(t) => playerRef.current?.seekTo(t)}
               onMarkerDrag={handleMarkerDrag}
               onMarkerDragEnd={handleMarkerDragEnd}
@@ -585,10 +694,6 @@ export default function App() {
                   <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
                   グリッド
                 </label>
-                <label className="toggle-chip">
-                  <input type="checkbox" checked={showPhase} onChange={(e) => setShowPhase(e.target.checked)} />
-                  フェーズ
-                </label>
 
                 <span className="separator" />
 
@@ -600,9 +705,9 @@ export default function App() {
                   <button className="icon-btn" onClick={handleResetTransform} title="リセット">⟲</button>
                 )}
 
-                {currentPhase !== 'unknown' && (
-                  <span className="phase-chip">{getPhaseInfo(currentPhase).label}</span>
-                )}
+                <span className="p-select-chip">
+                  {selectedPId ? `✎ ${P_POINT_INFO[selectedPId].label}` : 'P0（未選択）'}
+                </span>
               </div>
 
               <div className="toolbar-row">
@@ -636,11 +741,13 @@ export default function App() {
                     setState('idle');
                     cachedPoseRef.current = null;
                     allFramesRef.current = [];
-                    allPhasesRef.current = [];
                     pPointsRef.current = [];
+                    selectedPIdRef.current = null;
                     setPPoints([]);
                     setPFrames([]);
                     setActivePId(null);
+                    setSelectedPId(null);
+                    setSaveMessage('');
                   }}
                 >
                   別の動画を選択
@@ -650,8 +757,14 @@ export default function App() {
                     再解析
                   </button>
                 )}
+                {canSave && (
+                  <button className="btn-upload-new btn-save-record" onClick={handleSaveRecord}>
+                    💾 記録に保存
+                  </button>
+                )}
+                {saveMessage && <span className="save-message">{saveMessage}</span>}
                 <span className="hint-text">
-                  横ドラッグでコマ送り ・ ピンチでズーム
+                  動画タップ: 左/右=P点切替・中央=解除 ・ 写真タップでも選択
                 </span>
               </div>
             </div>

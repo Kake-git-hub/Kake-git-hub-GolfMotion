@@ -11,6 +11,13 @@ export interface PPointTimelineProps {
   duration: number;
   /** 現在の再生位置(秒) */
   currentTime: number;
+  /**
+   * 現在編集対象として選択中の P 点。この ID のマーカーのみ
+   * ラベル付きの操作可能なマーカーとして表示し、他は薄いティックのみ表示する
+   * (10個すべてを常時表示すると狭い画面で操作しづらいため)。
+   * null なら選択なし（ティックのみ）。
+   */
+  selectedId: PPointId | null;
   /** トラック背景のタップ/クリック */
   onSeek: (timeSec: number) => void;
   /** マーカードラッグ中(ライブプレビュー用に高頻度で呼ばれる) */
@@ -41,6 +48,7 @@ export default function PPointTimeline({
   pPoints,
   duration,
   currentTime,
+  selectedId,
   onSeek,
   onMarkerDrag,
   onMarkerDragEnd,
@@ -186,12 +194,23 @@ export default function PPointTimeline({
 
         {isEmpty && <div className="ppt-empty">解析待ち</div>}
 
+        {/* 非選択の P 点: 文脈把握用の薄いティック（非操作） */}
+        {pPoints.map((p) => {
+          if (p.id === selectedId) return null;
+          const info = P_POINT_INFO[p.id];
+          const style = {
+            left: `${toPercent(p.timeSec)}%`,
+            '--ppt-color': info.color,
+          } as CSSProperties;
+          return <span key={p.id} className="ppt-tick" style={style} />;
+        })}
+
+        {/* 選択中の P 点のみ、ラベル付きの操作可能なマーカーとして表示 */}
         {pPoints.map((p, index) => {
+          if (p.id !== selectedId) return null;
           const info = P_POINT_INFO[p.id];
           const dragging = drag?.id === p.id;
           const timeSec = dragging ? drag.timeSec : p.timeSec;
-          // ラベルは偶数/奇数で上下2段に互い違い配置して重なりを軽減
-          const rowClass = index % 2 === 0 ? 'ppt-marker--row0' : 'ppt-marker--row1';
           const style = {
             left: `${toPercent(timeSec)}%`,
             '--ppt-color': info.color,
@@ -200,7 +219,7 @@ export default function PPointTimeline({
           return (
             <div
               key={p.id}
-              className={`ppt-marker ${rowClass}${dragging ? ' ppt-marker--dragging' : ''}`}
+              className={`ppt-marker${dragging ? ' ppt-marker--dragging' : ''}`}
               style={style}
               title={info.description}
               onPointerDown={(e) => handleMarkerPointerDown(e, p.id, index)}

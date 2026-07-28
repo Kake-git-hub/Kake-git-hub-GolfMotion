@@ -1,8 +1,13 @@
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { drawSkeleton } from './skeletonRenderer';
+import { calculateAngles, drawAngles } from './angleCalculator';
+
 /**
  * 動画フレーム切り出しユーティリティ
  *
  * HTMLVideoElement から指定時刻のフレームを JPEG dataURL として取り出す。
- * P 点ギャラリー (PPointGallery) のサムネイル生成に使う。
+ * P 点ギャラリー (PPointGallery) のサムネイル生成、および記録保存用の
+ * 骨格・角度焼き込み画像生成に使う。
  *
  * 注意: シークは非同期なので必ず seekAndWait で 'seeked' を待ってから描画すること。
  *       ブラウザによっては 'seeked' が発火しないケースがあるため、必ず timeout で解決する。
@@ -103,18 +108,37 @@ export function seekAndWait(
   });
 }
 
+/** キャンバスに骨格線・角度ラベルを焼き込む（失敗しても無視） */
+function bakeOverlay(
+  ctx: CanvasRenderingContext2D,
+  landmarks: NormalizedLandmark[],
+  w: number,
+  h: number,
+): void {
+  try {
+    drawSkeleton(ctx, landmarks, w, h);
+    drawAngles(ctx, calculateAngles(landmarks), w, h);
+  } catch {
+    // 焼き込み失敗（不正なランドマーク等）は元フレームのまま返す
+  }
+}
+
 /**
  * 現在表示中のフレームを JPEG dataURL として取得する。
  *
  * maxWidth を超える動画はアスペクト比を維持して縮小する。
+ * overlayLandmarks を渡すと、そのフレームの骨格線・角度ラベルを画像に焼き込む
+ * （記録として永続保存する場合に使用。動画ファイル自体は保存できないため）。
  *
  * @param video 対象の video 要素
  * @param maxWidth 出力の最大幅 (既定 480)
+ * @param overlayLandmarks 焼き込む骨格ランドマーク（省略時は焼き込まない）
  * @returns dataURL。drawImage / toDataURL に失敗したら null
  */
 export function captureCurrentFrame(
   video: HTMLVideoElement,
   maxWidth = DEFAULT_MAX_WIDTH,
+  overlayLandmarks?: NormalizedLandmark[] | null,
 ): string | null {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
@@ -130,6 +154,9 @@ export function captureCurrentFrame(
 
   try {
     target.ctx.drawImage(video, 0, 0, w, h);
+    if (overlayLandmarks && overlayLandmarks.length > 0) {
+      bakeOverlay(target.ctx, overlayLandmarks, w, h);
+    }
     return target.canvas.toDataURL('image/jpeg', JPEG_QUALITY);
   } catch {
     // CORS 汚染キャンバス / 未描画などで失敗する
@@ -145,14 +172,16 @@ export function captureCurrentFrame(
  * @param video 対象の video 要素
  * @param timeSec 切り出す時刻 (秒)
  * @param maxWidth 出力の最大幅 (既定 480)
+ * @param overlayLandmarks 焼き込む骨格ランドマーク（省略時は焼き込まない）
  */
 export async function extractFrameAt(
   video: HTMLVideoElement,
   timeSec: number,
   maxWidth = DEFAULT_MAX_WIDTH,
+  overlayLandmarks?: NormalizedLandmark[] | null,
 ): Promise<string | null> {
   await seekAndWait(video, timeSec);
-  return captureCurrentFrame(video, maxWidth);
+  return captureCurrentFrame(video, maxWidth, overlayLandmarks);
 }
 
 /**
@@ -165,6 +194,7 @@ export async function extractFrameAt(
  * @param times 切り出す時刻の配列 (秒)
  * @param onProgress 進捗コールバック (done, total)
  * @param maxWidth 出力の最大幅 (既定 480)
+ * @param landmarksList times と同じ長さの骨格ランドマーク配列。渡すと各フレームに焼き込む
  * @returns times と同じ長さの dataURL 配列（失敗した要素は null）
  */
 export async function extractFramesAt(
@@ -172,6 +202,7 @@ export async function extractFramesAt(
   times: number[],
   onProgress?: (done: number, total: number) => void,
   maxWidth = DEFAULT_MAX_WIDTH,
+  landmarksList?: (NormalizedLandmark[] | null)[] | null,
 ): Promise<(string | null)[]> {
   const total = times.length;
   const results: (string | null)[] = [];
@@ -187,7 +218,7 @@ export async function extractFramesAt(
 
   try {
     for (let i = 0; i < total; i++) {
-      results.push(await extractFrameAt(video, times[i], maxWidth));
+      results.push(await extractFrameAt(video, times[i], maxWidth, landmarksList?.[i]));
       onProgress?.(i + 1, total);
     }
   } finally {

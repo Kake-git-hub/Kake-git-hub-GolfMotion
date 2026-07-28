@@ -1,74 +1,312 @@
-/* ===== クラブセッティング画面 (ClubManager) ===== */
+/* =========================================================
+   クラブセッティング管理 (ClubManager)
+   - cm-* プレフィックス
+   - 既存のダークテーマ (#1a1a2e / アクセント #88ccff) に合わせる
+   - A: セット一覧 / B: クラブ編集テーブル / C: 可視化
+   ========================================================= */
 
 .cm-container {
+  --cm-accent: #88ccff;
+  --cm-surface-1: rgba(255, 255, 255, 0.04);
+  --cm-surface-2: rgba(255, 255, 255, 0.07);
+  --cm-surface-3: rgba(255, 255, 255, 0.12);
+  --cm-line: rgba(255, 255, 255, 0.10);
+  --cm-ink: #ffffff;
+  --cm-ink-secondary: #c9c9dd;
+  --cm-ink-muted: #9a9ab5;
+  /* チャートのサーフェス: SVG 内のギャップ/リングと必ず同じ色 (ClubManager.tsx の VIZ_SURFACE) */
+  --cm-chart-surface: #22223a;
+  --cm-radius: 10px;
+
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
   width: 100%;
-  max-width: 100%;
-  padding: 8px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 10px 8px 40px;
   box-sizing: border-box;
 }
 
-/* ===== ヘッダー ===== */
+/* ===== ページヘッダー ===== */
+
 .cm-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.cm-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--cm-ink);
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.cm-header-note {
+  font-size: 0.72rem;
+  color: var(--cm-ink-muted);
+}
+
+/* ===== セクション共通の見出し ===== */
+
+.cm-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 10px;
 }
 
-.cm-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #ffffff;
+.cm-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--cm-ink);
   margin: 0;
 }
 
-.cm-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.cm-section-note {
+  font-size: 0.7rem;
+  color: var(--cm-ink-muted);
+  margin: 0;
 }
 
+/* =========================================================
+   A. セット一覧
+   ========================================================= */
+
+.cm-new-set-btn {
+  background: rgba(136, 204, 255, 0.12);
+  border: 1px solid rgba(136, 204, 255, 0.32);
+  border-radius: 8px;
+  color: var(--cm-accent);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cm-new-set-btn:hover {
+  background: rgba(136, 204, 255, 0.22);
+  border-color: var(--cm-accent);
+}
+
+.cm-new-set-btn:active {
+  transform: translateY(1px);
+}
+
+/* 横スクロールのカード列 */
+.cm-set-rail {
+  display: flex;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 2px 2px 10px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.cm-set-card {
+  flex: 0 0 auto;
+  width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--cm-surface-1);
+  border: 1px solid var(--cm-line);
+  border-radius: var(--cm-radius);
+  scroll-snap-align: start;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.cm-set-card:hover {
+  background: var(--cm-surface-2);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 編集中のセット */
+.cm-set-card-selected {
+  background: rgba(136, 204, 255, 0.10);
+  border-color: rgba(136, 204, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(136, 204, 255, 0.18);
+}
+
+/* 解析画面で使われるセット: 左端のアクセントレール */
+.cm-set-card-main {
+  position: relative;
+  overflow: hidden;
+}
+
+.cm-set-card-main::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--cm-accent);
+}
+
+.cm-set-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.cm-set-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--cm-ink);
+  line-height: 1.3;
+  /* 長いセット名は 2 行で省略 (クリップされた文字を出さない) */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.cm-set-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cm-set-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #0f1626;
+  background: var(--cm-accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  letter-spacing: 0.03em;
+}
+
+.cm-set-badge-inline {
+  margin-left: 2px;
+}
+
+.cm-set-count {
+  font-size: 0.68rem;
+  color: var(--cm-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cm-set-rename {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--cm-accent);
+  border-radius: 6px;
+  color: var(--cm-ink);
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.cm-set-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--cm-line);
+}
+
+.cm-chip {
+  background: var(--cm-surface-2);
+  border: 1px solid var(--cm-line);
+  border-radius: 6px;
+  color: var(--cm-ink-secondary);
+  font-family: inherit;
+  font-size: 0.68rem;
+  line-height: 1;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 5px 7px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.cm-chip:hover {
+  background: var(--cm-surface-3);
+  color: var(--cm-ink);
+}
+
+.cm-chip-main {
+  flex: 1;
+  color: var(--cm-accent);
+  border-color: rgba(136, 204, 255, 0.3);
+  background: rgba(136, 204, 255, 0.10);
+  font-weight: 600;
+}
+
+.cm-chip-main:hover {
+  background: rgba(136, 204, 255, 0.22);
+  color: var(--cm-accent);
+}
+
+.cm-chip-danger {
+  color: #ff9d9d;
+  border-color: rgba(255, 110, 110, 0.25);
+  background: rgba(255, 110, 110, 0.10);
+}
+
+.cm-chip-danger:hover {
+  background: rgba(255, 110, 110, 0.26);
+  color: #ffffff;
+}
+
+/* =========================================================
+   B. クラブ編集テーブル
+   ========================================================= */
+
 .cm-count {
-  font-size: 0.8rem;
-  color: #88ccff;
+  font-size: 0.75rem;
+  color: var(--cm-accent);
   background: rgba(136, 204, 255, 0.1);
   padding: 3px 9px;
   border-radius: 6px;
   font-variant-numeric: tabular-nums;
 }
 
-/* 14本以外の場合の注意色 */
+/* 14 本以外のときの注意色 */
 .cm-count-warn {
   color: #ffcc44;
   background: rgba(255, 204, 68, 0.12);
 }
 
-.cm-reset-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  color: #ccc;
-  font-size: 0.75rem;
-  padding: 5px 10px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.cm-reset-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-}
-
-/* ===== テーブル ===== */
 .cm-table-wrap {
   width: 100%;
   overflow-x: auto;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--cm-radius);
+  background: var(--cm-surface-1);
+  border: 1px solid var(--cm-line);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -81,18 +319,18 @@
 
 .cm-th {
   text-align: left;
-  padding: 6px 6px;
-  color: #88ccff;
+  padding: 8px 6px;
+  color: var(--cm-accent);
   font-weight: 600;
   white-space: nowrap;
-  background: #22223f;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: #23233f;
+  border-bottom: 1px solid var(--cm-surface-3);
   position: sticky;
   top: 0;
   z-index: 2;
 }
 
-/* 1列目 (クラブ名) は横スクロール時も左に固定 */
+/* 1 列目 (クラブ名) は横スクロール時も左に固定 */
 .cm-th-sticky {
   left: 0;
   z-index: 3;
@@ -120,7 +358,6 @@
   min-width: 68px;
 }
 
-/* 1列目 (クラブ名) セル: 横スクロール時も左に固定 */
 .cm-cell-sticky {
   position: sticky;
   left: 0;
@@ -138,7 +375,6 @@
   min-width: 40px;
 }
 
-/* ===== セル内 input ===== */
 .cm-input {
   width: 100%;
   min-width: 56px;
@@ -148,71 +384,315 @@
   color: #e0e0e0;
   font-size: 0.75rem;
   font-family: inherit;
-  padding: 2px 2px;
+  padding: 3px 2px;
   outline: none;
   transition: border-color 0.15s ease;
 }
 
 .cm-input:focus {
-  border-bottom-color: #88ccff;
+  border-bottom-color: var(--cm-accent);
 }
 
 .cm-input-numeric {
   text-align: right;
   min-width: 48px;
+  /* 縦に揃う数値列なので等幅数字 */
+  font-variant-numeric: tabular-nums;
 }
 
-/* ===== 削除ボタン (行末) ===== */
 .cm-delete-btn {
   background: rgba(255, 90, 90, 0.1);
   border: 1px solid rgba(255, 90, 90, 0.25);
   border-radius: 6px;
   color: #ff9999;
+  font-family: inherit;
   font-size: 0.7rem;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   line-height: 1;
   padding: 0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .cm-delete-btn:hover {
   background: rgba(255, 90, 90, 0.28);
-  color: #fff;
+  color: #ffffff;
 }
 
-/* ===== 追加ボタン ===== */
 .cm-add-btn {
   align-self: flex-start;
+  margin-top: 10px;
   background: rgba(136, 204, 255, 0.1);
   border: 1px solid rgba(136, 204, 255, 0.3);
   border-radius: 8px;
-  color: #88ccff;
-  font-size: 0.8rem;
-  padding: 6px 14px;
+  color: var(--cm-accent);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 7px 14px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease;
 }
 
 .cm-add-btn:hover {
   background: rgba(136, 204, 255, 0.2);
 }
 
-/* ===== レスポンシブ ===== */
+/* =========================================================
+   C. 可視化
+   ========================================================= */
+
+/* --- サマリー (数値そのものが答えのもの) --- */
+
+.cm-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cm-stat {
+  flex: 1 1 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  background: var(--cm-surface-1);
+  border: 1px solid var(--cm-line);
+  border-radius: 8px;
+}
+
+.cm-stat-label {
+  font-size: 0.68rem;
+  color: var(--cm-ink-muted);
+}
+
+.cm-stat-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--cm-ink);
+  line-height: 1.1;
+  /* 大きな単独の数値は等幅にしない (プロポーショナル) */
+}
+
+.cm-stat-value-sm {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* --- 凡例: 3 チャート共通の意味づけ --- */
+
+.cm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.cm-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--cm-ink-secondary);
+}
+
+.cm-legend-key {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+/* --- チャートカード --- */
+
+.cm-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.cm-chart-card {
+  margin: 0;
+  padding: 12px;
+  background: var(--cm-chart-surface);
+  border: 1px solid var(--cm-line);
+  border-radius: var(--cm-radius);
+  min-width: 0;
+}
+
+.cm-chart-head {
+  margin-bottom: 8px;
+}
+
+.cm-chart-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--cm-ink);
+  margin: 0;
+}
+
+.cm-chart-sub {
+  font-size: 0.68rem;
+  color: var(--cm-ink-muted);
+  margin: 2px 0 0;
+}
+
+/* ツールチップの基準。padding を持たせないことで SVG 座標と一致させる */
+.cm-chart-body {
+  position: relative;
+  width: 100%;
+  padding: 0;
+}
+
+.cm-chart-empty {
+  margin: 0;
+  padding: 34px 8px;
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--cm-ink-muted);
+  line-height: 1.6;
+}
+
+.cm-svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+/* SVG 内テキストはデータ色を着ない (インクトークンのみ) */
+.cm-svg-tick {
+  font-size: 10px;
+  fill: #9a9ab5;
+  font-variant-numeric: tabular-nums;
+}
+
+.cm-svg-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: #c9c9dd;
+}
+
+.cm-svg-axis-title {
+  font-size: 10px;
+  fill: #9a9ab5;
+}
+
+/* 当たり判定の矩形/円: フォーカスリングだけ見せる */
+.cm-svg [role='button'] {
+  cursor: default;
+  outline: none;
+}
+
+.cm-svg [role='button']:focus-visible {
+  outline: 2px solid var(--cm-accent);
+  outline-offset: -2px;
+}
+
+/* --- ツールチップ (値が主・ラベルが従) --- */
+
+.cm-tip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  min-width: 96px;
+  padding: 7px 9px;
+  background: #12121f;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 4;
+}
+
+.cm-tip-title {
+  font-size: 0.68rem;
+  color: var(--cm-ink-muted);
+  margin-bottom: 3px;
+}
+
+.cm-tip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.cm-tip-row + .cm-tip-row {
+  margin-top: 2px;
+}
+
+/* 凡例は矩形、ツールチップは短いストローク */
+.cm-tip-key {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.cm-tip-value {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--cm-ink);
+}
+
+.cm-tip-label {
+  font-size: 0.68rem;
+  color: var(--cm-ink-muted);
+}
+
+/* =========================================================
+   レスポンシブ (スマホ)
+   ========================================================= */
+
 @media (max-width: 768px) {
   .cm-container {
-    padding: 4px;
+    gap: 14px;
+    padding: 6px 6px 32px;
   }
 
   .cm-title {
-    font-size: 0.95rem;
+    font-size: 1rem;
   }
 
   .cm-table {
     font-size: 0.7rem;
+  }
+
+  .cm-set-card {
+    width: 168px;
+  }
+
+  .cm-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cm-stat-value {
+    font-size: 1.1rem;
+  }
+}
+
+/* タッチ端末ではホバーが張り付くため、押している間だけ反応させる */
+@media (hover: none) {
+  .cm-set-card:hover {
+    background: var(--cm-surface-1);
+    border-color: var(--cm-line);
+  }
+
+  .cm-set-card-selected:hover {
+    background: rgba(136, 204, 255, 0.10);
+    border-color: rgba(136, 204, 255, 0.55);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-container * {
+    transition: none !important;
   }
 }

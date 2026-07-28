@@ -74,14 +74,30 @@
   pointer-events: none;
 }
 
-/* --- マーカー --- */
+/* --- 非選択 P 点のティック（文脈把握用、非操作） --- */
+
+.ppt-tick {
+  position: absolute;
+  left: 0;
+  bottom: 7px;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  background: var(--ppt-color, #88ccff);
+  opacity: 0.35;
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* --- マーカー（選択中の P 点のみ表示） --- */
 
 .ppt-marker {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 28px;              /* 指で掴めるよう 24px 以上を確保 */
-  margin-left: -14px;
+  width: 32px;              /* 指で掴めるよう 24px 以上を確保 */
+  margin-left: -16px;
   touch-action: none;
   cursor: grab;
   z-index: 4;
@@ -92,25 +108,17 @@
   z-index: 6;
 }
 
-/* ラベルは偶数/奇数で上下2段に互い違い配置 */
 .ppt-marker-label {
   position: absolute;
+  top: 1px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1;
   font-weight: 600;
   color: var(--ppt-color, #88ccff);
   white-space: nowrap;
   pointer-events: none;
-}
-
-.ppt-marker--row0 .ppt-marker-label {
-  top: 1px;
-}
-
-.ppt-marker--row1 .ppt-marker-label {
-  top: 16px;
 }
 
 /* 縦線 */

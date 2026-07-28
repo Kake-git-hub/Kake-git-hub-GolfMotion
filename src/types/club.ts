@@ -21,3 +21,13 @@ export interface Club {
   leadAdjustment: string;        // 鉛調整 (例: '外+1.5g')
   underwrap: string;             // 下巻き
 }
+
+/** クラブ1セット (通常14本) */
+export interface ClubSet {
+  id: string;
+  name: string;              // 例: "レギュラーセット", "冬用セット"
+  clubs: Club[];
+  isMain: boolean;           // 解析画面で使用される「メインセット」かどうか (常に1つだけtrue)
+  createdAt: number;         // epoch ms
+  updatedAt: number;         // epoch ms
+}
