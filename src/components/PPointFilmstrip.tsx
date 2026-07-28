@@ -108,17 +108,7 @@ export default function PPointFilmstrip({
     [onScrubEnd],
   );
 
-  // 現在時刻に最も近いコマ（選択枠の表示位置）
-  const activeIndex = thumbs.length > 0
-    ? thumbs.reduce(
-        (best, t, i) =>
-          Math.abs(t.timeSec - currentTime) < Math.abs(thumbs[best].timeSec - currentTime) ? i : best,
-        0,
-      )
-    : -1;
-
   const selectedColor = selectedId ? P_POINT_INFO[selectedId].color : '#ffffff';
-  const cellWidthPct = thumbs.length > 0 ? 100 / thumbs.length : 0;
 
   return (
     <div className={`pfs-root${disabled ? ' pfs-disabled' : ''}`}>
@@ -180,13 +170,8 @@ export default function PPointFilmstrip({
               );
             })}
 
-            {/* 選択枠（iPhone 連続写真ピッカーの選択セル相当） */}
-            {activeIndex >= 0 && (
-              <div
-                className="pfs-cursor"
-                style={{ left: `${activeIndex * cellWidthPct}%`, width: `${cellWidthPct}%` }}
-              />
-            )}
+            {/* 再生位置の縦バー。P 点ピンと同じ座標系なので、選択中の P 点とは必ず重なる */}
+            <span className="pfs-head" style={{ left: `${toPercent(currentTime)}%` }} />
           </>
         )}
       </div>

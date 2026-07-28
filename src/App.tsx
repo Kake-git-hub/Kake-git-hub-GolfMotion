@@ -5,7 +5,6 @@ import SkeletonCanvas, { type SkeletonCanvasHandle } from './components/Skeleton
 import PPointFilmstrip, { type FilmstripThumb } from './components/PPointFilmstrip';
 import ClubManager from './components/ClubManager';
 import RecordHistory from './components/RecordHistory';
-import DataSync from './components/DataSync';
 import { initPoseDetector, detectPose, disposePoseDetector, isPoseDetectorReady, type PoseResult } from './services/poseDetector';
 import { drawSkeleton } from './services/skeletonRenderer';
 import { calculateAngles, drawAngles } from './services/angleCalculator';
@@ -24,7 +23,7 @@ import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import './App.css';
 
 type AppState = 'idle' | 'loading-model' | 'ready' | 'batch-analyzing' | 'error';
-type AppView = 'analysis' | 'clubs' | 'history' | 'data';
+type AppView = 'analysis' | 'clubs' | 'history';
 /** バッチ解析の3段階: 粗いスキャン → 窓内本解析 → 高速区間の精密化 */
 type BatchStage = 'scan' | 'pose' | 'refine';
 
@@ -735,12 +734,6 @@ export default function App() {
         >
           📋 記録
         </button>
-        <button
-          className={`tab-btn ${view === 'data' ? 'active' : ''}`}
-          onClick={() => setView('data')}
-        >
-          ☁️ バックアップ
-        </button>
       </nav>
 
       {/* ========== クラブ設定ビュー ========== */}
@@ -748,9 +741,6 @@ export default function App() {
 
       {/* ========== 記録ビュー ========== */}
       {view === 'history' && <RecordHistory />}
-
-      {/* ========== バックアップ / 復元ビュー ========== */}
-      {view === 'data' && <DataSync />}
 
       {/* ========== 解析ビュー（動画状態保持のため display 切替） ========== */}
       <div style={{ display: view === 'analysis' ? 'contents' : 'none' }}>

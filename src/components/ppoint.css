@@ -118,17 +118,18 @@
   box-shadow: 0 0 10px -1px var(--pfs-color, #88ccff);
 }
 
-/* 選択枠: 周囲を暗く落として選択中のコマだけを浮かび上がらせる
-   (box-shadow の巨大スプレッドは overflow:hidden でクリップされる) */
-.pfs-cursor {
+/* 再生位置の縦バー: ピンと同じ「時刻→%」変換で置くので必ず一致する */
+.pfs-head {
   position: absolute;
   top: 0;
   bottom: 0;
-  border: 3px solid var(--pfs-color, #ffffff);
-  border-radius: 4px;
-  box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.45);
+  width: 2px;
+  margin-left: -1px;
+  background: #ffffff;
+  /* 明るいコマの上でも見えるように輪郭を付ける */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
 }
 
 /* ===== 帯の下の読み出し ===== */
