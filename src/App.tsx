@@ -17,7 +17,7 @@ import { extractFramesAt, extractFrameAt, seekAndWait } from './services/frameEx
 import { getMainSet } from './services/clubSetStore';
 import { saveRecord } from './services/recordStore';
 import { useTouchGestures } from './hooks/useTouchGestures';
-import { P_POINT_IDS, P_POINT_INFO, type PPoint, type PPointId, type PPointFrame } from './types/ppoint';
+import { P_POINT_IDS, P_POINT_INFO, clampPPointTime, type PPoint, type PPointId, type PPointFrame } from './types/ppoint';
 import type { Club } from './types/club';
 import type { SwingRecord } from './types/record';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
@@ -58,6 +58,8 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
+  /** 表示オプション（骨格/角度/グリッド/回転）パネルの開閉。既定は閉じてUIをすっきりさせる */
+  const [showViewOptions, setShowViewOptions] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0); // 0~100 (各ステージ毎)
   const [batchStage, setBatchStage] = useState<BatchStage>('scan');
 
@@ -495,8 +497,12 @@ export default function App() {
   // === タッチジェスチャー ===
 
   /**
-   * 横ドラッグ: 指を置いた位置からの累積 px で再生位置を決定。
+   * 横ドラッグ: 指を置いた位置からの累積 px で時刻を決定。
    * PX_PER_FRAME px = 1解析フレーム。
+   *
+   * P点選択中（P0 でない）は、この使い慣れた大きな動画エリアのドラッグで
+   * 選択中の P点自体を微調整する（タイムライン上の小さなつまみを正確に
+   * つまむ必要をなくすため）。未選択時は通常どおり再生位置のスクラブになる。
    */
   const handleHorizontalDrag = useCallback((totalDeltaPx: number) => {
     const dur = playerRef.current?.getDuration() ?? 0;
@@ -508,13 +514,28 @@ export default function App() {
 
     const frameDelta = totalDeltaPx / PX_PER_FRAME;
     const timeDelta = frameDelta / analysisFpsRef.current;
-    const newTime = Math.max(0, Math.min(dur, dragBaseTimeRef.current + timeDelta));
-    playerRef.current?.seekTo(newTime);
-  }, []);
+    const rawTime = dragBaseTimeRef.current + timeDelta;
+
+    const selId = selectedPIdRef.current;
+    if (selId) {
+      const idx = pPointsRef.current.findIndex(p => p.id === selId);
+      if (idx >= 0) {
+        handleMarkerDrag(selId, clampPPointTime(pPointsRef.current, idx, rawTime, dur));
+        return;
+      }
+    }
+
+    playerRef.current?.seekTo(Math.max(0, Math.min(dur, rawTime)));
+  }, [handleMarkerDrag]);
 
   const handleHorizontalDragEnd = useCallback(() => {
+    const selId = selectedPIdRef.current;
+    if (selId) {
+      const p = pPointsRef.current.find(x => x.id === selId);
+      if (p) void handleMarkerDragEnd(selId, p.timeSec);
+    }
     dragBaseTimeRef.current = -1;
-  }, []);
+  }, [handleMarkerDragEnd]);
 
   useEffect(() => { dragBaseTimeRef.current = -1; }, [videoSrc]);
 
@@ -679,38 +700,30 @@ export default function App() {
               disabled={state !== 'ready' || extracting}
             />
 
+            {/* P点の状態表示 + 状況に応じたヒント（シンプルに1行で） */}
+            <div className="p-status-row">
+              <span className="p-select-chip">
+                {selectedPId ? `✎ ${P_POINT_INFO[selectedPId].label}` : 'P0（未選択）'}
+              </span>
+              <span className="hint-text">
+                {state !== 'ready'
+                  ? ''
+                  : selectedPId
+                    ? '動画を横ドラッグで位置調整 ・ タップで解除'
+                    : '動画をタップしてP点を選択（左/右で切替）'}
+              </span>
+            </div>
+
             {/* ミニツールバー */}
             <div className="mini-toolbar">
               <div className="toolbar-row">
-                <label className="toggle-chip">
-                  <input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} />
-                  骨格
-                </label>
-                <label className="toggle-chip">
-                  <input type="checkbox" checked={showAngles} onChange={(e) => setShowAngles(e.target.checked)} />
-                  角度
-                </label>
-                <label className="toggle-chip">
-                  <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-                  グリッド
-                </label>
+                <button
+                  className={`btn-upload-new${showViewOptions ? ' active' : ''}`}
+                  onClick={() => setShowViewOptions(v => !v)}
+                >
+                  ⚙ 表示設定
+                </button>
 
-                <span className="separator" />
-
-                <button className="icon-btn" onClick={() => handleRotation(-1)} title="左回転">↶</button>
-                <span className="rotation-display">{rotation}°</span>
-                <button className="icon-btn" onClick={() => handleRotation(1)} title="右回転">↷</button>
-
-                {(zoom !== 1 || rotation !== 0) && (
-                  <button className="icon-btn" onClick={handleResetTransform} title="リセット">⟲</button>
-                )}
-
-                <span className="p-select-chip">
-                  {selectedPId ? `✎ ${P_POINT_INFO[selectedPId].label}` : 'P0（未選択）'}
-                </span>
-              </div>
-
-              <div className="toolbar-row">
                 {/* 使用クラブ選択 */}
                 <select
                   className="club-select"
@@ -730,6 +743,34 @@ export default function App() {
                   </span>
                 )}
               </div>
+
+              {/* 表示オプション（折りたたみ、既定では隠して画面をすっきりさせる） */}
+              {showViewOptions && (
+                <div className="toolbar-row view-options-row">
+                  <label className="toggle-chip">
+                    <input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} />
+                    骨格
+                  </label>
+                  <label className="toggle-chip">
+                    <input type="checkbox" checked={showAngles} onChange={(e) => setShowAngles(e.target.checked)} />
+                    角度
+                  </label>
+                  <label className="toggle-chip">
+                    <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+                    グリッド
+                  </label>
+
+                  <span className="separator" />
+
+                  <button className="icon-btn" onClick={() => handleRotation(-1)} title="左回転">↶</button>
+                  <span className="rotation-display">{rotation}°</span>
+                  <button className="icon-btn" onClick={() => handleRotation(1)} title="右回転">↷</button>
+
+                  {(zoom !== 1 || rotation !== 0) && (
+                    <button className="icon-btn" onClick={handleResetTransform} title="リセット">⟲</button>
+                  )}
+                </div>
+              )}
 
               <div className="toolbar-row">
                 <button
@@ -763,9 +804,6 @@ export default function App() {
                   </button>
                 )}
                 {saveMessage && <span className="save-message">{saveMessage}</span>}
-                <span className="hint-text">
-                  動画タップ: 左/右=P点切替・中央=解除 ・ 写真タップでも選択
-                </span>
               </div>
             </div>
 

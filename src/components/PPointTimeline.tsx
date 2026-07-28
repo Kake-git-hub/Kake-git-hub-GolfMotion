@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import type { PPoint, PPointId } from '../types/ppoint';
-import { P_POINT_INFO } from '../types/ppoint';
+import { P_POINT_INFO, clampPPointTime } from '../types/ppoint';
 import './ppoint.css';
 
 export interface PPointTimelineProps {
@@ -26,9 +26,6 @@ export interface PPointTimelineProps {
   onMarkerDragEnd: (id: PPointId, timeSec: number) => void;
   disabled?: boolean;
 }
-
-/** 隣接マーカーとの最小間隔(秒) */
-const EPSILON = 0.01;
 
 /** ドラッグ中の内部状態 */
 interface DragState {
@@ -98,22 +95,9 @@ export default function PPointTimeline({
     [duration],
   );
 
-  /**
-   * 隣接マーカー間に clamp する。
-   * P3 は P2 と P4 を追い越せない (epsilon 0.01秒)。両端は 0 と duration。
-   */
+  /** 隣接マーカー間に clamp する（P3 は P2 と P4 を追い越せない。両端は 0 と duration） */
   const clampToNeighbors = useCallback(
-    (index: number, timeSec: number) => {
-      const prev = pPoints[index - 1];
-      const next = pPoints[index + 1];
-      let lo = prev ? prev.timeSec + EPSILON : 0;
-      let hi = next ? next.timeSec - EPSILON : duration;
-      lo = Math.max(0, lo);
-      hi = Math.min(duration > 0 ? duration : 0, hi);
-      // 隣接が詰まりすぎて範囲が反転した場合は下限に寄せる
-      if (lo > hi) return lo;
-      return Math.max(lo, Math.min(hi, timeSec));
-    },
+    (index: number, timeSec: number) => clampPPointTime(pPoints, index, timeSec, duration),
     [pPoints, duration],
   );
 

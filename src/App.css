@@ -386,13 +386,24 @@
   color: #666;
 }
 
+/* ===== P点ステータス行（タイムライン直下、状態と操作ヒントを1行で） ===== */
+.p-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  max-width: 800px;
+}
+
 .p-select-chip {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: #ffcc44;
   background: rgba(255, 204, 68, 0.12);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -426,6 +437,19 @@
 .btn-upload-new:hover {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
+}
+
+.btn-upload-new.active {
+  background: rgba(136, 204, 255, 0.18);
+  border-color: #88ccff;
+  color: #88ccff;
+}
+
+/* 折りたたみ式の表示オプション行: 少し沈んだ背景で「サブ設定」であることを示す */
+.view-options-row {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  padding: 6px 4px;
 }
 
 /* ===== エラーバナー ===== */

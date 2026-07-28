@@ -13,9 +13,9 @@
   width: 100%;
   max-width: 800px;
   margin: 0 auto;
-  /* 左右 14px: 両端マーカー(幅28px)のはみ出し分を確保
-     下 18px: ドラッグ中の時刻バブル用 */
-  padding: 4px 14px 18px;
+  /* 左右 26px: 両端マーカー(幅48px)のはみ出し分を確保
+     下 22px: ドラッグ中の時刻バブル用 */
+  padding: 4px 26px 22px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 10px;
   user-select: none;
@@ -31,31 +31,31 @@
 .ppt-track {
   position: relative;
   width: 100%;
-  height: 60px;
+  height: 76px;
   touch-action: none;       /* スマホのスクロール/ズームを抑止 */
   cursor: pointer;
 }
 
-/* 下段のトラックバー */
+/* 下段のトラックバー（太めにして視認性・タップのしやすさを確保） */
 .ppt-bar {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 8px;
-  height: 10px;
+  bottom: 12px;
+  height: 14px;
   background: rgba(255, 255, 255, 0.10);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 5px;
+  border-radius: 7px;
   pointer-events: none;
 }
 
 /* 現在時刻インジケータ(白い細線) */
 .ppt-playhead {
   position: absolute;
-  top: 24px;
-  bottom: 4px;
-  width: 1px;
-  margin-left: -0.5px;
+  top: 22px;
+  bottom: 6px;
+  width: 2px;
+  margin-left: -1px;
   background: #ffffff;
   box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
   pointer-events: none;
@@ -79,25 +79,25 @@
 .ppt-tick {
   position: absolute;
   left: 0;
-  bottom: 7px;
-  width: 2px;
-  height: 12px;
-  margin-left: -1px;
+  bottom: 10px;
+  width: 3px;
+  height: 18px;
+  margin-left: -1.5px;
   background: var(--ppt-color, #88ccff);
-  opacity: 0.35;
-  border-radius: 1px;
+  opacity: 0.4;
+  border-radius: 1.5px;
   pointer-events: none;
   z-index: 2;
 }
 
-/* --- マーカー（選択中の P 点のみ表示） --- */
+/* --- マーカー（選択中の P 点のみ表示。指で掴みやすいよう十分な当たり判定を確保） --- */
 
 .ppt-marker {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 32px;              /* 指で掴めるよう 24px 以上を確保 */
-  margin-left: -16px;
+  width: 48px;              /* 推奨タップ領域 44px 以上を確保 */
+  margin-left: -24px;
   touch-action: none;
   cursor: grab;
   z-index: 4;
@@ -113,9 +113,9 @@
   top: 1px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   line-height: 1;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ppt-color, #88ccff);
   white-space: nowrap;
   pointer-events: none;
@@ -125,8 +125,8 @@
 .ppt-marker-line {
   position: absolute;
   left: 50%;
-  top: 30px;
-  bottom: 8px;
+  top: 26px;
+  bottom: 12px;
   width: 2px;
   transform: translateX(-50%);
   background: var(--ppt-color, #88ccff);
@@ -134,27 +134,28 @@
   pointer-events: none;
 }
 
-/* バー上のつまみ */
+/* バー上のつまみ（常時大きめに表示し、掴める場所だと一目でわかるように） */
 .ppt-marker-knob {
   position: absolute;
   left: 50%;
-  bottom: 7px;
-  width: 12px;
-  height: 12px;
+  bottom: 9px;
+  width: 24px;
+  height: 24px;
   transform: translateX(-50%);
   border-radius: 50%;
   background: var(--ppt-color, #88ccff);
-  border: 1px solid rgba(0, 0, 0, 0.55);
+  border: 2px solid rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
   pointer-events: none;
-  transition: width 0.12s ease, height 0.12s ease, box-shadow 0.12s ease;
+  transition: width 0.12s ease, height 0.12s ease, bottom 0.12s ease, box-shadow 0.12s ease;
 }
 
 /* ドラッグ中は強調(拡大 + グロー) */
 .ppt-marker--dragging .ppt-marker-knob {
-  width: 18px;
-  height: 18px;
+  width: 34px;
+  height: 34px;
   bottom: 4px;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 12px -1px var(--ppt-color, #88ccff);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.3), 0 0 16px -1px var(--ppt-color, #88ccff);
 }
 
 .ppt-marker--dragging .ppt-marker-line {
@@ -163,7 +164,7 @@
 }
 
 .ppt-marker--dragging .ppt-marker-label {
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
 }
 
@@ -171,7 +172,7 @@
 .ppt-marker-time {
   position: absolute;
   left: 50%;
-  bottom: -17px;
+  bottom: -19px;
   transform: translateX(-50%);
   font-size: 0.7rem;
   line-height: 1;

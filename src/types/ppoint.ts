@@ -54,3 +54,28 @@ export interface PPointFrame {
   /** 切り出したフレームの dataURL (未取得なら null) */
   imageUrl: string | null;
 }
+
+/** 隣接マーカーとの最小間隔(秒) */
+const P_POINT_CLAMP_EPSILON = 0.01;
+
+/**
+ * P 点の時刻を隣接する P 点の間に収める（追い越し禁止）。
+ * タイムラインのマーカードラッグ、動画ドラッグでの微調整の両方から使う共通ロジック。
+ * @param index pPoints 内の対象インデックス
+ */
+export function clampPPointTime(
+  pPoints: PPoint[],
+  index: number,
+  timeSec: number,
+  duration: number,
+): number {
+  const prev = pPoints[index - 1];
+  const next = pPoints[index + 1];
+  let lo = prev ? prev.timeSec + P_POINT_CLAMP_EPSILON : 0;
+  let hi = next ? next.timeSec - P_POINT_CLAMP_EPSILON : duration;
+  lo = Math.max(0, lo);
+  hi = Math.min(duration > 0 ? duration : 0, hi);
+  // 隣接が詰まりすぎて範囲が反転した場合は下限に寄せる
+  if (lo > hi) return lo;
+  return Math.max(lo, Math.min(hi, timeSec));
+}
