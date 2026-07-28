@@ -12,6 +12,18 @@
   padding: 8px;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 10px;
+
+  /* --- テキストトークン (グラフの軸・凡例もこれを使う) --- */
+  --rh-ink: #ffffff;
+  --rh-ink-2: #cccccc;
+  --rh-ink-muted: #898781;
+  /* --- 面 --- */
+  --rh-surface-1: rgba(255, 255, 255, 0.05);
+  --rh-surface-2: rgba(255, 255, 255, 0.09);
+  --rh-line: rgba(255, 255, 255, 0.12);
+  /* --- グラフのプロット面 (RecordHistory.tsx の CHART_SURFACE と一致させること) --- */
+  --rh-chart-surface: #1a1a28;
+  --rh-chart-grid: rgba(255, 255, 255, 0.09);
 }
 
 /* =========================================================
@@ -49,7 +61,7 @@
   color: #cccccc;
   font-family: inherit;
   font-size: 0.75rem;
-  padding: 4px 10px;
+  padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s;
@@ -62,9 +74,20 @@
 }
 
 .rh-detail-date {
+  flex: 1 1 auto;
+  text-align: right;
   font-size: 0.75rem;
   color: #aaaaaa;
   font-variant-numeric: tabular-nums;
+}
+
+/* セクション見出し (写真 / グラフ / クラブ) */
+.rh-section-title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--rh-ink-2);
+  letter-spacing: 0.02em;
 }
 
 /* =========================================================
@@ -112,7 +135,7 @@
 
 .rh-card {
   position: relative;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--rh-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-left: 2px solid #88ccff;   /* 左辺にアクセント */
   border-radius: 8px;
@@ -170,6 +193,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+/* 角度グラフを持つ記録の目印 */
+.rh-card-badge {
+  font-size: 0.65rem;
+  color: #9fd0a0;
+  background: rgba(12, 163, 12, 0.14);
+  border: 1px solid rgba(12, 163, 12, 0.35);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 /* サムネイル (P1 / P4 / P7 / P10 の 4 枚を横並び) */
@@ -248,107 +282,511 @@
   color: #ffffff;
 }
 
+/* 詳細ヘッダーの削除ボタンは通常フロー (絶対配置しない) */
+.rh-delete-btn--detail {
+  position: static;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+
 /* =========================================================
-   詳細ビュー
+   詳細: 写真ページャ
    ========================================================= */
 
-.rh-detail-club {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  margin-bottom: 8px;
-}
-
-.rh-detail-club-name {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #88ccff;
-}
-
-.rh-detail-club-head {
-  font-size: 0.7rem;
-  color: #888888;
-}
-
-/* デスクトップ: 5列×2行 (PPointGallery と同じパターン) */
-.rh-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
-}
-
-.rh-grid-card {
+.rh-pager {
   display: flex;
   flex-direction: column;
-  padding: 0;
-  margin: 0;
-  text-align: left;
-  font-family: inherit;
-  color: inherit;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-top: 2px solid var(--rh-color, #88ccff);   /* 上辺に P カラー */
-  border-radius: 6px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
+  gap: 6px;
+  margin-bottom: 12px;
 }
 
-.rh-grid-card:hover {
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 0 10px -3px var(--rh-color, #88ccff);
+.rh-pager-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.rh-grid-thumb {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  background: #000000;
+.rh-pager-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--rh-color, #88ccff);
+}
+
+.rh-pager-time {
+  font-size: 0.72rem;
+  color: #aaaaaa;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-pager-pos {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: #777777;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-pager-zoom {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--rh-line);
+  border-radius: 6px;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
 }
 
-.rh-grid-thumb-img {
+.rh-pager-zoom:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #88ccff;
+  color: #ffffff;
+}
+
+/* --- 写真本体 --- */
+
+.rh-pager-stage {
+  position: relative;
+  width: 100%;
+  /* 縦動画が主役なので、画面高に対して収まる上限を決める */
+  height: 55vh;
+  max-height: 520px;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-top: 2px solid var(--rh-color, #88ccff);
+  border-radius: 10px;
+  overflow: hidden;
+  /* 写真エリアだけスワイプを掴む (他の領域は通常の縦スクロールのまま) */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
+.rh-pager-stage:focus-visible {
+  outline: 2px solid #88ccff;
+  outline-offset: 2px;
+}
+
+.rh-pager-img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
   pointer-events: none;
+  -webkit-user-drag: none;
 }
 
-.rh-grid-meta {
+/* 左右のタップ領域を示す控えめな矢印 */
+.rh-pager-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 52px;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  opacity: 0.55;
+  pointer-events: none;   /* タップ判定は stage 側で行う */
+  transition: opacity 0.15s;
+}
+
+.rh-pager-arrow--prev {
+  left: 6px;
+}
+
+.rh-pager-arrow--next {
+  right: 6px;
+}
+
+.rh-pager-arrow--off {
+  opacity: 0.12;
+}
+
+/* --- そのコマの角度チップ --- */
+
+.rh-pager-angles {
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 3px 5px;
 }
 
-.rh-grid-label {
-  font-size: 0.7rem;
-  color: #cccccc;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.rh-angle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--rh-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  font-size: 0.68rem;
+  line-height: 1.6;
 }
 
-.rh-grid-time {
-  font-size: 0.7rem;
-  color: #88ccff;
-  font-variant-numeric: tabular-nums;
+.rh-angle-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
-/* --- メモ欄 --- */
+.rh-angle-chip-name {
+  color: var(--rh-ink-2);
+}
+
+.rh-angle-chip-value {
+  color: var(--rh-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- P1〜P10 チップ列 --- */
+
+.rh-pager-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rh-pager-chip {
+  flex: 1 1 auto;
+  min-width: 32px;
+  min-height: 32px;          /* 指で押しやすい最小サイズ */
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 2px solid var(--rh-color, #88ccff);
+  color: #999999;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.rh-pager-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #dddddd;
+}
+
+.rh-pager-chip--active {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--rh-color, #88ccff);
+  color: var(--rh-color, #88ccff);
+  box-shadow: 0 0 10px -3px var(--rh-color, #88ccff);
+}
+
+/* =========================================================
+   詳細: 関節角度グラフ
+   ========================================================= */
+
+.rh-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.rh-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rh-chart-toggle {
+  min-height: 28px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--rh-line);
+  border-radius: 6px;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.rh-chart-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #88ccff;
+  color: #ffffff;
+}
+
+.rh-chart-toggle[aria-pressed='true'] {
+  color: #88ccff;
+  border-color: rgba(136, 204, 255, 0.5);
+}
+
+/* プロット面 (SVG のリング色と同じ実色にする) */
+.rh-chart-plot {
+  position: relative;
+  width: 100%;
+  background: var(--rh-chart-surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.rh-chart-svg {
+  display: block;
+}
+
+/* 目盛り線はヘアライン・実線・控えめ */
+.rh-chart-grid {
+  stroke: var(--rh-chart-grid);
+  stroke-width: 1;
+}
+
+.rh-chart-crosshair {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+}
+
+.rh-chart-tick {
+  fill: var(--rh-ink-muted);
+  font-size: 10px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-chart-line {
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* データ点は 2px のサーフェスリングを持つ (線と重なっても読める) */
+.rh-chart-marker {
+  stroke-width: 2;
+}
+
+.rh-chart-hit {
+  cursor: pointer;
+}
+
+/* --- ツールチップ --- */
+
+.rh-chart-tip {
+  position: absolute;
+  top: 8px;
+  min-width: 108px;
+  padding: 6px 8px;
+  background: rgba(10, 10, 18, 0.94);
+  border: 1px solid var(--rh-line);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.rh-chart-tip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--rh-ink);
+  white-space: nowrap;
+}
+
+.rh-chart-tip-time {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--rh-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.rh-chart-tip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.rh-chart-tip-name {
+  color: var(--rh-ink-2);
+}
+
+.rh-chart-tip-value {
+  margin-left: auto;
+  color: var(--rh-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 凡例 --- */
+
+.rh-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rh-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rh-chart-legend-key {
+  display: block;
+  flex-shrink: 0;
+}
+
+.rh-chart-legend-name {
+  font-size: 0.7rem;
+  color: var(--rh-ink-2);   /* 系列色はマークだけが持つ (文字はテキストトークン) */
+}
+
+.rh-chart-hint {
+  margin: 0;
+  font-size: 0.65rem;
+  color: #666666;
+}
+
+.rh-chart-none {
+  margin: 0;
+  padding: 14px 10px;
+  background: var(--rh-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  color: #777777;
+  line-height: 1.5;
+}
+
+/* --- 数値表 (ツールチップの代替経路) --- */
+
+.rh-chart-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.rh-chart-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-chart-table th,
+.rh-chart-table td {
+  padding: 3px 6px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--rh-ink-2);
+}
+
+.rh-chart-table thead th {
+  color: var(--rh-ink-muted);
+  font-weight: 600;
+}
+
+.rh-chart-table tbody th {
+  text-align: left;
+  color: var(--rh-ink);
+  font-weight: 600;
+}
+
+.rh-chart-table-row--active td,
+.rh-chart-table-row--active th {
+  background: rgba(136, 204, 255, 0.10);
+}
+
+/* =========================================================
+   詳細: 使用クラブ情報
+   ========================================================= */
+
+.rh-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.rh-spec-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  margin: 0;
+  padding: 8px;
+  background: var(--rh-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.rh-spec-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.rh-spec-label {
+  flex: 0 0 5.5em;
+  font-size: 0.68rem;
+  color: var(--rh-ink-muted);
+}
+
+.rh-spec-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--rh-ink);
+  word-break: break-word;
+}
+
+.rh-spec-none {
+  margin: 0;
+  padding: 10px;
+  background: var(--rh-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  color: #777777;
+}
+
+/* =========================================================
+   メモ欄
+   ========================================================= */
 
 .rh-note {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 10px;
+  margin-top: 4px;
 }
 
 .rh-note-label {
@@ -361,7 +799,7 @@
   resize: vertical;
   padding: 6px 8px;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--rh-line);
   border-radius: 6px;
   color: #dddddd;
   font-family: inherit;
@@ -423,16 +861,27 @@
     padding: 6px;
   }
 
-  /* スマホ: 2列 */
-  .rh-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .rh-card-thumb {
     max-width: none;
   }
 
   .rh-card-main {
     padding: 8px 32px 8px 8px;
+  }
+
+  .rh-pager-stage {
+    height: 50vh;
+    min-height: 200px;
+  }
+
+  .rh-pager-chip {
+    font-size: 0.7rem;
+  }
+}
+
+/* 狭い画面ではクラブ情報を 1 列に折り返す */
+@media (max-width: 520px) {
+  .rh-spec-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

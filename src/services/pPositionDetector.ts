@@ -36,6 +36,12 @@ const SETTLE_SPEED_RATIO = 0.15;
 const SETTLE_MIN_SEC = 0.2;
 /** 平滑化ウィンドウの基準時間（秒）。ダウンスイングは約0.25秒のため、これより広くすると速度ピークが潰れる */
 const SMOOTH_SEC = 0.15;
+/**
+ * P6/P8（シャフト水平）を探すときにインパクト前後から除外する時間（秒）。
+ * 実際のスイングでシャフト水平からインパクトまでは 0.05〜0.1 秒程度あるため、
+ * これより近い候補はインパクトそのものと見なして採らない。
+ */
+const IMPACT_GUARD_SEC = 0.07;
 /** fps が不正な場合の既定値 */
 const FALLBACK_FPS = 30;
 
@@ -450,6 +456,193 @@ function findHipCross(
   return -1;
 }
 
+// ===== 高 fps サンプルによる局所精密化 =====
+
+/** 局所再探索の探索半径（秒）。粗い検出のズレを吸収できる程度に留める */
+const REFINE_RADIUS_SEC = 0.1;
+/** 精密化後に隣接 P 点との間に確保する最小間隔（秒） */
+const REFINE_EPSILON = 0.005;
+
+/** 高 fps で取り直した区間サンプル */
+export interface HighResSamples {
+  /** 等間隔サンプル（index 昇順 = 時刻昇順） */
+  frames: (NormalizedLandmark[] | null)[];
+  /** サンプリング fps */
+  fps: number;
+  /** frames[0] の絶対時刻（秒） */
+  startSec: number;
+}
+
+/** 区間 [lo, hi] で値が最小のインデックス（有限値のみ対象。無ければ -1） */
+function argMinInRange(values: number[], lo: number, hi: number): number {
+  let best = -1;
+  let min = Infinity;
+  for (let i = lo; i <= hi; i++) {
+    if (isNum(values[i]) && values[i] < min) {
+      min = values[i];
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** 区間 [lo, hi] で値が最大のインデックス（有限値のみ対象。無ければ -1） */
+function argMaxInRange(values: number[], lo: number, hi: number): number {
+  let best = -1;
+  let max = -Infinity;
+  for (let i = lo; i <= hi; i++) {
+    if (isNum(values[i]) && values[i] > max) {
+      max = values[i];
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * 区間 [lo, hi] で手が腰の高さを指定方向に横切るフレームのうち、
+ * center に最も近いものを返す。
+ *
+ * 「腰の高さに最も近いフレーム」ではなく「横切るフレーム」を探すのが重要。
+ * インパクト前後は手が腰の高さ付近に長く留まるため、単なる最小距離だと
+ * フォロー側の P8 がインパクト (P7) に吸い寄せられてしまう。
+ */
+function findHipCrossNearest(
+  handY: number[],
+  hipY: number[],
+  lo: number,
+  hi: number,
+  dir: CrossDir,
+  center: number,
+): number {
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = Math.max(lo + 1, 1); i <= hi; i++) {
+    const prev = handY[i - 1] - hipY[i - 1];
+    const cur = handY[i] - hipY[i];
+    if (!isNum(prev) || !isNum(cur)) continue;
+    // 正 = 手が腰より下 / 負 = 手が腰より上
+    const crossed = dir === 'up' ? prev >= 0 && cur < 0 : prev <= 0 && cur > 0;
+    if (!crossed) continue;
+    const dist = Math.abs(i - center);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * P 点ごとの「その位置らしさ」の基準で区間内の最良フレームを選ぶ。
+ *
+ * 粗い検出で既におおよその位置は分かっているので、ここでは再検出ではなく
+ * 近傍のみを見る（大きく飛ばないので誤検出のリスクが無い）。
+ */
+function locateInRange(
+  id: PPointId,
+  frames: (NormalizedLandmark[] | null)[],
+  tr: Traces,
+  lo: number,
+  hi: number,
+  center: number,
+): number {
+  switch (id) {
+    // 腕が地面と平行に最も近いフレーム
+    case 'P3':
+    case 'P5':
+      return findMostHorizontalArm(frames, lo, hi, POSE.LEFT_SHOULDER, POSE.LEFT_WRIST);
+    case 'P9':
+      return findMostHorizontalArm(frames, lo, hi, POSE.RIGHT_SHOULDER, POSE.RIGHT_WRIST);
+
+    // 手が最も高い（Y 最小）フレーム
+    case 'P4':
+      return argMinInRange(tr.handY, lo, hi);
+
+    // 水平方向の手の速度が最大のフレーム
+    case 'P7':
+      return argMaxInRange(tr.speedX, lo, hi);
+
+    // 手が腰の高さを横切るフレーム（シャフト水平の近似）
+    // P2/P8 = 下から上へ、P6 = 上から下へ
+    case 'P2':
+    case 'P6':
+    case 'P8': {
+      const dir: CrossDir = id === 'P6' ? 'down' : 'up';
+      const crossed = findHipCrossNearest(tr.handY, tr.hipY, lo, hi, dir, center);
+      if (crossed >= 0) return crossed;
+      // 区間内に横切りが無い（粗い位置がずれている等）ときだけ最小距離で代用する
+      const diff = tr.handY.map((y, i) => Math.abs(y - tr.hipY[i]));
+      return argMinInRange(diff, lo, hi);
+    }
+
+    // P1(アドレス) / P10(フィニッシュ) は静止区間の端なので局所精密化に馴染まない
+    default:
+      return -1;
+  }
+}
+
+/** 時刻の単調非減少を強制する（前から順に、最小間隔を空けて押し出す） */
+function enforceMonotonicTimes(points: PPoint[]): PPoint[] {
+  const out: PPoint[] = [];
+  let prevT = -Infinity;
+  for (const p of points) {
+    const t = p.timeSec <= prevT ? prevT + REFINE_EPSILON : p.timeSec;
+    out.push(t === p.timeSec ? p : { ...p, timeSec: t });
+    prevT = t;
+  }
+  return out;
+}
+
+/**
+ * 高 fps で取り直した区間サンプルを使って、指定した P 点の位置を局所的に精密化する。
+ *
+ * スイングの速い区間（P3〜P8 付近）は 20fps では 1 コマ 0.05 秒あり、隣り合う
+ * P 点が同じコマに乗ってしまうことがある。そこでその区間だけを高 fps で取り直し、
+ * 各 P 点を「粗い位置の近傍」で選び直して精度を上げる。
+ *
+ * 区間外の P 点、および指定されなかった P 点はそのまま返す。例外は投げない。
+ *
+ * @param rough 粗い検出で得た P1〜P10
+ * @param samples 高 fps 区間サンプル
+ * @param ids 精密化の対象にする P 点
+ */
+export function refinePPoints(
+  rough: PPoint[],
+  samples: HighResSamples,
+  ids: PPointId[],
+): PPoint[] {
+  const frames = Array.isArray(samples.frames) ? samples.frames : [];
+  const n = frames.length;
+  if (n < 3 || rough.length === 0) return rough;
+
+  const fps = normalizeFps(samples.fps);
+  const startSec = Number.isFinite(samples.startSec) ? samples.startSec : 0;
+  const endSec = startSec + (n - 1) / fps;
+
+  const tr = buildTraces(frames, fps);
+  if (!tr.valid) return rough;
+
+  const radius = Math.max(1, Math.round(REFINE_RADIUS_SEC * fps));
+  const targets = new Set<PPointId>(ids);
+
+  const refined = rough.map((p) => {
+    if (!targets.has(p.id)) return p;
+    // 高解像度区間に収まっていない P 点は触らない
+    if (p.timeSec < startSec || p.timeSec > endSec) return p;
+
+    const center = clampIndex(Math.round((p.timeSec - startSec) * fps), n);
+    const lo = Math.max(0, center - radius);
+    const hi = Math.min(n - 1, center + radius);
+
+    const best = locateInRange(p.id, frames, tr, lo, hi, center);
+    if (best < 0) return p;
+    return { ...p, timeSec: startSec + best / fps };
+  });
+
+  return enforceMonotonicTimes(refined);
+}
+
 // ===== 出力整形 =====
 
 /** PPoint を組み立てる */
@@ -571,13 +764,22 @@ export function detectPPoints(frames: (NormalizedLandmark[] | null)[], fps: numb
   const p5Found = findMostHorizontalArm(frames, p4, p7, POSE.LEFT_SHOULDER, POSE.LEFT_WRIST);
   const p5 = p5Found >= 0 ? p5Found : midFrame(p4, p7);
 
-  // P6: P5..P7 で手 Y が腰の高さを上 → 下に通過（ダウンスイング）
-  const p6Found = findHipCross(tr.handY, tr.hipY, p5, p7, 'down');
+  // P6/P8（シャフト水平）はクラブを検出できないため「手が腰の高さ」で代用するが、
+  // インパクト前後は手が腰の高さ付近を通るので、そのままだと P7 に張り付いてしまう。
+  // インパクトの近傍を探索から外して、前後それぞれの通過点を取る。
+  const impactGuard = Math.max(1, Math.round(safeFps * IMPACT_GUARD_SEC));
+
+  // P6: P5..(P7の手前) で手 Y が腰の高さを上 → 下に通過（ダウンスイング）
+  //     探索範囲が潰れる（P5 がインパクト直前まで寄っている）場合は中間点で代用する。
+  //     findHipCross は from > to を入れ替えてしまうので、範囲の妥当性は呼ぶ前に判定する。
+  const p6Hi = p7 - impactGuard;
+  const p6Found = p6Hi > p5 ? findHipCross(tr.handY, tr.hipY, p5, p6Hi, 'down') : -1;
   const p6 = p6Found >= 0 ? p6Found : midFrame(p5, p7);
 
-  // P8: P7..P10 で手 Y が腰の高さを下 → 上に通過（フォロー）
+  // P8: (P7の後)..P10 で手 Y が腰の高さを下 → 上に通過（フォロー）
   //     見つからない場合は P7 と暫定 P9 の中間
-  const p8Found = findHipCross(tr.handY, tr.hipY, p7, p10, 'up');
+  const p8Lo = p7 + impactGuard;
+  const p8Found = p8Lo < p10 ? findHipCross(tr.handY, tr.hipY, p8Lo, p10, 'up') : -1;
   let p8: number;
   if (p8Found >= 0) {
     p8 = p8Found;

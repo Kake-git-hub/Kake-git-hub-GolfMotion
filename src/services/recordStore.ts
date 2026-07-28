@@ -7,9 +7,11 @@
  * 例外を呼び出し側へ伝播させない (UI が真っ白になるのを防ぐ)。
  */
 
+import type { Club } from '../types/club';
 import type { PPointId } from '../types/ppoint';
 import { P_POINT_IDS } from '../types/ppoint';
-import type { RecordFrame, SwingRecord } from '../types/record';
+import type { AngleKey, FrameAngles, RecordFrame, SwingRecord } from '../types/record';
+import { ANGLE_KEYS } from '../types/record';
 
 const STORAGE_KEY = 'golf-motion.records.v1';
 
@@ -18,9 +20,67 @@ function isPPointId(v: unknown): v is PPointId {
   return typeof v === 'string' && (P_POINT_IDS as string[]).includes(v);
 }
 
+/** 有限な数値だけを通す (NaN / Infinity / 文字列は弾く) */
+function finiteNumberOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** 文字列だけを通す (それ以外は空文字) */
+function stringOrEmpty(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
+/**
+ * 生データの角度マップを FrameAngles に正規化する
+ * - 既知の AngleKey のみ採用 (未知キーは捨てる)
+ * - 数値以外 / 非有限値 (NaN, Infinity) は欠落扱いにする
+ * - 有効な値が 1 つも無ければ undefined (= 角度データ無し)
+ */
+function normalizeAngles(raw: unknown): FrameAngles | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+
+  const angles: FrameAngles = {};
+  let count = 0;
+  for (const key of ANGLE_KEYS) {
+    const v = finiteNumberOrNull(r[key]);
+    if (v === null) continue;
+    angles[key as AngleKey] = v;
+    count += 1;
+  }
+
+  return count > 0 ? angles : undefined;
+}
+
+/**
+ * 生データのクラブスナップショットを Club に正規化する
+ * オブジェクトでなければ (未選択 / 破損) null
+ */
+function normalizeClub(raw: unknown): Club | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+
+  return {
+    id: stringOrEmpty(r.id),
+    name: stringOrEmpty(r.name),
+    head: stringOrEmpty(r.head),
+    shaft: stringOrEmpty(r.shaft),
+    lengthInch: finiteNumberOrNull(r.lengthInch),
+    balance: stringOrEmpty(r.balance),
+    totalWeightG: finiteNumberOrNull(r.totalWeightG),
+    frequencyCpm: finiteNumberOrNull(r.frequencyCpm),
+    loftDeg: finiteNumberOrNull(r.loftDeg),
+    lieAngleDeg: finiteNumberOrNull(r.lieAngleDeg),
+    trimming: stringOrEmpty(r.trimming),
+    leadAdjustment: stringOrEmpty(r.leadAdjustment),
+    underwrap: stringOrEmpty(r.underwrap),
+  };
+}
+
 /**
  * 生データ 1 フレームを検証して RecordFrame に正規化する
  * 必須項目 (id / imageUrl) が欠けていれば null
+ * angles は任意 (旧データには存在しない)
  */
 function normalizeFrame(raw: unknown): RecordFrame | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -29,11 +89,16 @@ function normalizeFrame(raw: unknown): RecordFrame | null {
   if (!isPPointId(r.id)) return null;
   if (typeof r.imageUrl !== 'string' || r.imageUrl === '') return null;
 
-  return {
+  const frame: RecordFrame = {
     id: r.id,
-    timeSec: typeof r.timeSec === 'number' && Number.isFinite(r.timeSec) ? r.timeSec : 0,
+    timeSec: finiteNumberOrNull(r.timeSec) ?? 0,
     imageUrl: r.imageUrl,
   };
+
+  const angles = normalizeAngles(r.angles);
+  if (angles !== undefined) frame.angles = angles;
+
+  return frame;
 }
 
 /**
@@ -53,13 +118,14 @@ function normalizeRecord(raw: unknown): SwingRecord | null {
 
   const record: SwingRecord = {
     id: r.id,
-    createdAt:
-      typeof r.createdAt === 'number' && Number.isFinite(r.createdAt) ? r.createdAt : 0,
+    createdAt: finiteNumberOrNull(r.createdAt) ?? 0,
     clubId: typeof r.clubId === 'string' && r.clubId !== '' ? r.clubId : null,
-    clubName: typeof r.clubName === 'string' ? r.clubName : '',
-    clubHead: typeof r.clubHead === 'string' ? r.clubHead : '',
+    clubName: stringOrEmpty(r.clubName),
+    clubHead: stringOrEmpty(r.clubHead),
     frames,
   };
+  // club はキーが存在するときだけ持たせる (旧データは undefined のまま)
+  if ('club' in r) record.club = normalizeClub(r.club);
   if (typeof r.note === 'string') record.note = r.note;
 
   return record;

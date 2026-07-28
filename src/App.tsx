@@ -11,21 +11,21 @@ import { calculateAngles, drawAngles } from './services/angleCalculator';
 import { drawGrid } from './services/gridRenderer';
 import { LandmarkSmoother } from './services/landmarkSmoother';
 import { ConfidenceInterpolator } from './services/confidenceInterpolator';
-import { detectPPoints, estimateSwingWindow } from './services/pPositionDetector';
+import { detectPPoints, estimateSwingWindow, refinePPoints } from './services/pPositionDetector';
 import { extractFramesAt, captureThumbnail, seekAndWait } from './services/frameExtractor';
 import { getMainSet } from './services/clubSetStore';
 import { saveRecord } from './services/recordStore';
 import { useTouchGestures } from './hooks/useTouchGestures';
 import { P_POINT_IDS, P_POINT_INFO, clampPPointTime, type PPoint, type PPointId } from './types/ppoint';
 import type { Club } from './types/club';
-import type { SwingRecord } from './types/record';
+import { ANGLE_LABEL_TO_KEY, type FrameAngles, type SwingRecord } from './types/record';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import './App.css';
 
 type AppState = 'idle' | 'loading-model' | 'ready' | 'batch-analyzing' | 'error';
 type AppView = 'analysis' | 'clubs' | 'history';
-/** バッチ解析の2段階: 粗いスキャン → 窓内本解析 */
-type BatchStage = 'scan' | 'pose';
+/** バッチ解析の3段階: 粗いスキャン → 窓内本解析 → 高速区間の精密化 */
+type BatchStage = 'scan' | 'pose' | 'refine';
 
 /** 粗いスキャンの目標 FPS（スイング区間の大まかな検出用） */
 const COARSE_FPS = 5;
@@ -37,6 +37,26 @@ const ANALYSIS_FPS = 20;
 const WINDOW_PAD_SEC = 1;
 /** 本解析窓の最大フレーム数（安全弁） */
 const MAX_WINDOW_FRAMES = 400;
+/**
+ * 高速区間（P3〜P8）の再サンプリング FPS。
+ * この区間はスイングが最も速く、20fps では 1 コマ 0.05 秒あって
+ * 隣り合う P 点が同じコマに乗ってしまうため、集中的に細かく撮り直す。
+ */
+const FAST_FPS = 60;
+/** 高速区間の前後に足す余白（秒）。局所再探索がはみ出さないよう確保する */
+const FAST_PAD_SEC = 0.15;
+/** 高速区間の最大フレーム数（安全弁） */
+const MAX_FAST_FRAMES = 240;
+/**
+ * 高 fps サンプルで位置を精密化する P 点。
+ *
+ * P3/P5(腕が水平)・P4(手の最高点)・P7(水平速度のピーク) は基準が鋭いので
+ * コマを細かくするほど正確になる。
+ * 一方 P6/P8(シャフトが水平) はクラブを検出できないため「手が腰の高さ」で
+ * 代用しており、その通過はインパクト直後にも起こる。精密化すると P7 に
+ * 吸い寄せられて重なってしまうため、粗い位置のまま据え置く。
+ */
+const FAST_REFINE_IDS: PPointId[] = ['P3', 'P4', 'P5', 'P7'];
 /** フィルムストリップに並べるコマ数の上限 */
 const MAX_THUMBS = 30;
 /**
@@ -51,6 +71,58 @@ const STRIP_PAD_MIN_SEC = 0.2;
 const PX_PER_FRAME = 30;
 /** 使用クラブ選択の保存キー */
 const SELECTED_CLUB_KEY = 'golf-motion.selectedClub';
+
+/**
+ * ランドマークから記録用の関節角度を取り出す。
+ * angleCalculator は日本語ラベル付きで返すので、グラフ用のキーに変換する。
+ */
+function anglesFor(landmarks: NormalizedLandmark[] | null): FrameAngles | undefined {
+  if (!landmarks || landmarks.length === 0) return undefined;
+  const out: FrameAngles = {};
+  for (const info of calculateAngles(landmarks)) {
+    const key = ANGLE_LABEL_TO_KEY[info.label];
+    if (key && Number.isFinite(info.angle)) out[key] = info.angle;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * コマ画像の集合から、指定範囲を時間的に等間隔で覆う最大 count 枚を選ぶ。
+ *
+ * 本解析(20fps)と高速区間(60fps)でコマの密度が違うため、インデックスではなく
+ * 時刻を基準に「その位置に最も近いコマ」を拾う。
+ */
+function pickEvenlySpacedThumbs(
+  all: FilmstripThumb[],
+  start: number,
+  end: number,
+  count: number,
+): FilmstripThumb[] {
+  const inRange = all
+    .filter(t => t.timeSec >= start - 1e-6 && t.timeSec <= end + 1e-6)
+    .sort((a, b) => a.timeSec - b.timeSec);
+  if (inRange.length <= count) return inRange;
+
+  const picked: FilmstripThumb[] = [];
+  let lastIdx = -1;
+  for (let k = 0; k < count; k++) {
+    const target = count === 1 ? start : start + ((end - start) * k) / (count - 1);
+    let bestIdx = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < inRange.length; i++) {
+      const d = Math.abs(inRange[i].timeSec - target);
+      if (d < bestD) {
+        bestD = d;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx !== lastIdx) {
+      picked.push(inRange[bestIdx]);
+      lastIdx = bestIdx;
+    }
+  }
+  return picked;
+}
 
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
@@ -104,6 +176,10 @@ export default function App() {
   const cachedPoseRef = useRef<PoseResult | null>(null);
   /** 実際に使用した本解析 FPS */
   const analysisFpsRef = useRef(ANALYSIS_FPS);
+  /** 高速区間の高 fps サンプル（P3〜P8 付近。スクラブ時もこちらを優先して引く） */
+  const fastFramesRef = useRef<(NormalizedLandmark[] | null)[]>([]);
+  const fastStartRef = useRef(0);
+  const fastFpsRef = useRef(FAST_FPS);
   const pPointsRef = useRef<PPoint[]>([]);
   const selectedPIdRef = useRef<PPointId | null>(null);
   /** 一括処理中は seeked ハンドラの再解析を抑止する */
@@ -114,6 +190,19 @@ export default function App() {
 
   // ---------- 窓内キャッシュからランドマークを引く（ライブ推論を避けて遅延を防ぐ） ----------
   const lookupCachedLandmarks = useCallback((timeSec: number): NormalizedLandmark[] | null => {
+    // 高速区間は 60fps サンプルの方が正確なので優先して引く
+    const fast = fastFramesRef.current;
+    if (fast.length > 0) {
+      const fFps = fastFpsRef.current;
+      const fStart = fastStartRef.current;
+      const fEnd = fStart + (fast.length - 1) / fFps;
+      if (timeSec >= fStart && timeSec <= fEnd) {
+        const idx = Math.round((timeSec - fStart) * fFps);
+        const hit = fast[Math.max(0, Math.min(fast.length - 1, idx))];
+        if (hit) return hit;
+      }
+    }
+
     const frames = allFramesRef.current;
     if (frames.length === 0) return null;
     const fps = analysisFpsRef.current;
@@ -256,9 +345,54 @@ export default function App() {
 
       allFramesRef.current = frames;
 
+      // 収集したコマ画像を時刻付きで集約（後段で高速区間の分を足す）
+      const collected: FilmstripThumb[] = [];
+      frameThumbs.forEach((url, i) => {
+        if (url) collected.push({ timeSec: windowStart + i / fps, url });
+      });
+
       // P1〜P10 自動検出（窓内の相対フレームで検出し、絶対時刻へオフセット）
       const relPts = detectPPoints(frames, fps);
-      const pts = relPts.map(p => ({ ...p, timeSec: p.timeSec + windowStart }));
+      let pts = relPts.map(p => ({ ...p, timeSec: p.timeSec + windowStart }));
+
+      // --- ステージ3: 高速区間（P3〜P8）を 60fps で撮り直して位置を精密化 ---
+      const byId = new Map(pts.map(p => [p.id, p] as const));
+      const fastFrom = byId.get('P3')?.timeSec;
+      const fastTo = byId.get('P8')?.timeSec;
+      if (fastFrom != null && fastTo != null && fastTo > fastFrom) {
+        setBatchStage('refine');
+        setBatchProgress(0);
+        const fastStart = Math.max(windowStart, fastFrom - FAST_PAD_SEC);
+        const fastEnd = Math.min(windowEnd, fastTo + FAST_PAD_SEC);
+        const fastDur = Math.max(fastEnd - fastStart, 0.05);
+        const fastFps = Math.min(FAST_FPS, Math.max(fps, MAX_FAST_FRAMES / fastDur));
+        const fastStep = 1 / fastFps;
+        const fastTotal = Math.max(1, Math.floor(fastDur * fastFps));
+        const fastFrames: (NormalizedLandmark[] | null)[] = [];
+
+        for (let i = 0; i <= fastTotal; i++) {
+          const t = Math.min(fastStart + i * fastStep, fastEnd);
+          await seekAndWait(video, t);
+          const result = detectPose(video);
+          fastFrames.push(result?.landmarks ?? null);
+          const url = captureThumbnail(video);
+          if (url) collected.push({ timeSec: t, url });
+          setBatchProgress(Math.round((i / fastTotal) * 100));
+        }
+
+        fastFramesRef.current = fastFrames;
+        fastStartRef.current = fastStart;
+        fastFpsRef.current = fastFps;
+
+        pts = refinePPoints(
+          pts,
+          { frames: fastFrames, fps: fastFps, startSec: fastStart },
+          FAST_REFINE_IDS,
+        );
+      }
+
+      // frameIndex を本解析グリッド基準に揃え直す（精密化で時刻が動いたため）
+      pts = pts.map(p => ({ ...p, frameIndex: Math.round((p.timeSec - windowStart) * fps) }));
       pPointsRef.current = pts;
       setPPoints(pts);
 
@@ -270,19 +404,7 @@ export default function App() {
       const stripStart = Math.max(windowStart, firstT - pad);
       const stripEnd = Math.min(windowEnd, lastT + pad);
       setSwingWindow({ start: stripStart, end: stripEnd });
-
-      // 表示範囲内のコマから等間隔に MAX_THUMBS 枚を選ぶ
-      const loIdx = Math.max(0, Math.round((stripStart - windowStart) * fps));
-      const hiIdx = Math.min(frameThumbs.length - 1, Math.round((stripEnd - windowStart) * fps));
-      const available = Math.max(1, hiIdx - loIdx + 1);
-      const count = Math.min(MAX_THUMBS, available);
-      const picked: FilmstripThumb[] = [];
-      for (let k = 0; k < count; k++) {
-        const idx = count === 1 ? loIdx : loIdx + Math.round((k * (available - 1)) / (count - 1));
-        const url = frameThumbs[idx];
-        if (url) picked.push({ timeSec: windowStart + idx / fps, url });
-      }
-      setThumbs(picked);
+      setThumbs(pickEvenlySpacedThumbs(collected, stripStart, stripEnd, MAX_THUMBS));
 
       // 最初は P1 を選択した状態で始める（すぐ調整に入れるように）
       const firstId: PPointId = 'P1';
@@ -308,6 +430,7 @@ export default function App() {
     canvasRef.current?.clear();
     cachedPoseRef.current = null;
     allFramesRef.current = [];
+    fastFramesRef.current = [];
     windowStartRef.current = 0;
     windowEndRef.current = 0;
     pPointsRef.current = [];
@@ -489,7 +612,14 @@ export default function App() {
         clubId: selectedClub?.id ?? null,
         clubName: selectedClub?.name ?? '',
         clubHead: selectedClub?.head ?? '',
-        frames: pts.map((p, i) => ({ id: p.id, timeSec: p.timeSec, imageUrl: urls[i] as string })),
+        // クラブは後で編集/削除されうるので、保存時点の全スペックを控えておく
+        club: selectedClub ? { ...selectedClub } : null,
+        frames: pts.map((p, i) => ({
+          id: p.id,
+          timeSec: p.timeSec,
+          imageUrl: urls[i] as string,
+          angles: anglesFor(landmarksList[i]),
+        })),
       };
       saveRecord(record);
       setSaveMessage('記録に保存しました');
@@ -610,7 +740,9 @@ export default function App() {
                     ? 'ポーズ検出モデルを読み込み中...'
                     : batchStage === 'scan'
                       ? `スイング区間を推定中... ${batchProgress}%`
-                      : `詳細解析中... ${batchProgress}%`}
+                      : batchStage === 'pose'
+                        ? `詳細解析中... ${batchProgress}%`
+                        : `高速区間を精密解析中... ${batchProgress}%`}
                 </span>
                 {state === 'batch-analyzing' && (
                   <div className="batch-progress-bar">
