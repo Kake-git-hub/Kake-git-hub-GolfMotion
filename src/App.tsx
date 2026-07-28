@@ -5,6 +5,7 @@ import SkeletonCanvas, { type SkeletonCanvasHandle } from './components/Skeleton
 import PPointFilmstrip, { type FilmstripThumb } from './components/PPointFilmstrip';
 import ClubManager from './components/ClubManager';
 import RecordHistory from './components/RecordHistory';
+import DataSync from './components/DataSync';
 import { initPoseDetector, detectPose, disposePoseDetector, isPoseDetectorReady, type PoseResult } from './services/poseDetector';
 import { drawSkeleton } from './services/skeletonRenderer';
 import { calculateAngles, drawAngles } from './services/angleCalculator';
@@ -23,7 +24,7 @@ import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import './App.css';
 
 type AppState = 'idle' | 'loading-model' | 'ready' | 'batch-analyzing' | 'error';
-type AppView = 'analysis' | 'clubs' | 'history';
+type AppView = 'analysis' | 'clubs' | 'history' | 'data';
 /** バッチ解析の3段階: 粗いスキャン → 窓内本解析 → 高速区間の精密化 */
 type BatchStage = 'scan' | 'pose' | 'refine';
 
@@ -59,6 +60,12 @@ const MAX_FAST_FRAMES = 240;
 const FAST_REFINE_IDS: PPointId[] = ['P3', 'P4', 'P5', 'P7'];
 /** フィルムストリップに並べるコマ数の上限 */
 const MAX_THUMBS = 30;
+/**
+ * 各解析ステージでコマ画像を撮る枚数の目安。
+ * JPEG 変換は 1 枚ずつは軽くても数百枚だと効いてくるので、
+ * 帯に並べるのに十分な候補数だけ撮って解析を速く保つ。
+ */
+const THUMB_CANDIDATES = 40;
 /**
  * コマ帯の表示範囲を P1〜P10 の前後に足す余白（P1..P10 の長さに対する比率）。
  * 解析ウィンドウは検出を安定させるため広めに取るが、帯はスイングそのものに
@@ -139,7 +146,6 @@ export default function App() {
   const [rotation, setRotation] = useState(0);
   /** 表示オプション（骨格/角度/グリッド/回転）パネルの開閉。既定は閉じてUIをすっきりさせる */
   const [showViewOptions, setShowViewOptions] = useState(false);
-  const [batchProgress, setBatchProgress] = useState(0); // 0~100 (各ステージ毎)
   const [batchStage, setBatchStage] = useState<BatchStage>('scan');
 
   // P システム
@@ -163,6 +169,19 @@ export default function App() {
   const canvasRef = useRef<SkeletonCanvasHandle>(null);
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  /**
+   * 進捗表示は state ではなく DOM を直接書き換える。
+   * 解析ループは 200 フレーム前後回るため、フレームごとに再描画すると
+   * 描画コストが解析本体を上回ってしまう。
+   */
+  const progressFillRef = useRef<HTMLDivElement>(null);
+  const progressTextRef = useRef<HTMLSpanElement>(null);
+
+  const reportProgress = useCallback((pct: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+    if (progressFillRef.current) progressFillRef.current.style.width = `${clamped}%`;
+    if (progressTextRef.current) progressTextRef.current.textContent = `${clamped}%`;
+  }, []);
 
   // 解析パイプライン
   const smootherRef = useRef(new LandmarkSmoother(1.7, 0.01));
@@ -295,11 +314,12 @@ export default function App() {
     setState('batch-analyzing');
     const dur = video.duration;
 
+
     suppressSeekRef.current = true;
     try {
       // --- ステージ1: 粗いスキャンでスイング区間を推定 ---
       setBatchStage('scan');
-      setBatchProgress(0);
+      reportProgress(0);
       const coarseFps = Math.min(COARSE_FPS, Math.max(1, MAX_COARSE_FRAMES / Math.max(dur, 0.1)));
       const coarseStep = 1 / coarseFps;
       const coarseTotal = Math.max(1, Math.floor(dur * coarseFps));
@@ -310,7 +330,7 @@ export default function App() {
         await seekAndWait(video, t);
         const result = detectPose(video);
         coarseFrames.push(result?.landmarks ?? null);
-        setBatchProgress(Math.round((i / coarseTotal) * 100));
+        reportProgress(Math.round((i / coarseTotal) * 100));
       }
 
       const estimate = estimateSwingWindow(coarseFrames, coarseFps);
@@ -322,7 +342,7 @@ export default function App() {
 
       // --- ステージ2: 窓内のみ 20fps で本解析（処理を軽くする） ---
       setBatchStage('pose');
-      setBatchProgress(0);
+      reportProgress(0);
       const windowDur = Math.max(windowEnd - windowStart, 0.1);
       const fps = Math.min(ANALYSIS_FPS, Math.max(1, MAX_WINDOW_FRAMES / windowDur));
       analysisFpsRef.current = fps;
@@ -330,26 +350,24 @@ export default function App() {
       const totalFrames = Math.max(1, Math.floor(windowDur * fps));
       const frames: (NormalizedLandmark[] | null)[] = [];
 
-      // 既にシーク済みの位置でコマ画像も全フレーム分拾っておく
-      // （追加シークが不要なので実質ゼロコスト。帯に出す範囲は P 点確定後に決める）
-      const frameThumbs: (string | null)[] = [];
+      // 既にシーク済みの位置でコマ画像も拾う（追加シークが要らないので安い）。
+      // ただし JPEG 変換はそれなりに重いので、帯に必要な枚数だけ間引いて撮る。
+      const collected: FilmstripThumb[] = [];
+      const thumbStride = Math.max(1, Math.ceil((totalFrames + 1) / THUMB_CANDIDATES));
 
       for (let i = 0; i <= totalFrames; i++) {
         const t = Math.min(windowStart + i * step, windowEnd);
         await seekAndWait(video, t);
         const result = detectPose(video);
         frames.push(result?.landmarks ?? null);
-        frameThumbs.push(captureThumbnail(video));
-        setBatchProgress(Math.round((i / totalFrames) * 100));
+        if (i % thumbStride === 0) {
+          const url = captureThumbnail(video);
+          if (url) collected.push({ timeSec: t, url });
+        }
+        reportProgress(Math.round((i / totalFrames) * 100));
       }
 
       allFramesRef.current = frames;
-
-      // 収集したコマ画像を時刻付きで集約（後段で高速区間の分を足す）
-      const collected: FilmstripThumb[] = [];
-      frameThumbs.forEach((url, i) => {
-        if (url) collected.push({ timeSec: windowStart + i / fps, url });
-      });
 
       // P1〜P10 自動検出（窓内の相対フレームで検出し、絶対時刻へオフセット）
       const relPts = detectPPoints(frames, fps);
@@ -361,23 +379,41 @@ export default function App() {
       const fastTo = byId.get('P8')?.timeSec;
       if (fastFrom != null && fastTo != null && fastTo > fastFrom) {
         setBatchStage('refine');
-        setBatchProgress(0);
-        const fastStart = Math.max(windowStart, fastFrom - FAST_PAD_SEC);
+        reportProgress(0);
         const fastEnd = Math.min(windowEnd, fastTo + FAST_PAD_SEC);
+        const rawStart = Math.max(windowStart, fastFrom - FAST_PAD_SEC);
+        // 本解析グリッドに乗るよう開始位置を丸める。こうすると高 fps 側の
+        // 何コマかに一度が本解析と同じ時刻になり、そのぶん解析を省ける。
+        const baseIdx = Math.max(0, Math.round((rawStart - windowStart) * fps));
+        const fastStart = windowStart + baseIdx / fps;
         const fastDur = Math.max(fastEnd - fastStart, 0.05);
-        const fastFps = Math.min(FAST_FPS, Math.max(fps, MAX_FAST_FRAMES / fastDur));
+        // 本解析 fps の整数倍にして、重なるコマを再利用できるようにする
+        const ratio = Math.max(1, Math.round(Math.min(FAST_FPS, Math.max(fps, MAX_FAST_FRAMES / fastDur)) / fps));
+        const fastFps = fps * ratio;
         const fastStep = 1 / fastFps;
         const fastTotal = Math.max(1, Math.floor(fastDur * fastFps));
         const fastFrames: (NormalizedLandmark[] | null)[] = [];
+        const fastThumbStride = Math.max(1, Math.ceil((fastTotal + 1) / THUMB_CANDIDATES));
 
         for (let i = 0; i <= fastTotal; i++) {
           const t = Math.min(fastStart + i * fastStep, fastEnd);
+
+          // 本解析と同じ時刻のコマは解析済みなので使い回す（シークも推論も省略）
+          const reuseIdx = i % ratio === 0 ? baseIdx + i / ratio : -1;
+          if (reuseIdx >= 0 && reuseIdx < frames.length) {
+            fastFrames.push(frames[reuseIdx]);
+            reportProgress(Math.round((i / fastTotal) * 100));
+            continue;
+          }
+
           await seekAndWait(video, t);
           const result = detectPose(video);
           fastFrames.push(result?.landmarks ?? null);
-          const url = captureThumbnail(video);
-          if (url) collected.push({ timeSec: t, url });
-          setBatchProgress(Math.round((i / fastTotal) * 100));
+          if (i % fastThumbStride === 0) {
+            const url = captureThumbnail(video);
+            if (url) collected.push({ timeSec: t, url });
+          }
+          reportProgress(Math.round((i / fastTotal) * 100));
         }
 
         fastFramesRef.current = fastFrames;
@@ -418,8 +454,8 @@ export default function App() {
       suppressSeekRef.current = false;
     }
     setState('ready');
-    setBatchProgress(0);
-  }, []);
+    reportProgress(0);
+  }, [reportProgress]);
 
   // ---------- File selected ----------
   const handleVideoSelected = useCallback((file: File) => {
@@ -699,6 +735,12 @@ export default function App() {
         >
           📋 記録
         </button>
+        <button
+          className={`tab-btn ${view === 'data' ? 'active' : ''}`}
+          onClick={() => setView('data')}
+        >
+          ☁️ バックアップ
+        </button>
       </nav>
 
       {/* ========== クラブ設定ビュー ========== */}
@@ -706,6 +748,9 @@ export default function App() {
 
       {/* ========== 記録ビュー ========== */}
       {view === 'history' && <RecordHistory />}
+
+      {/* ========== バックアップ / 復元ビュー ========== */}
+      {view === 'data' && <DataSync />}
 
       {/* ========== 解析ビュー（動画状態保持のため display 切替） ========== */}
       <div style={{ display: view === 'analysis' ? 'contents' : 'none' }}>
@@ -736,17 +781,23 @@ export default function App() {
               <div className="model-loading-overlay">
                 <div className="spinner" />
                 <span>
-                  {state === 'loading-model'
-                    ? 'ポーズ検出モデルを読み込み中...'
-                    : batchStage === 'scan'
-                      ? `スイング区間を推定中... ${batchProgress}%`
-                      : batchStage === 'pose'
-                        ? `詳細解析中... ${batchProgress}%`
-                        : `高速区間を精密解析中... ${batchProgress}%`}
+                  {state === 'loading-model' ? (
+                    'ポーズ検出モデルを読み込み中...'
+                  ) : (
+                    <>
+                      {batchStage === 'scan'
+                        ? 'スイング区間を推定中... '
+                        : batchStage === 'pose'
+                          ? '詳細解析中... '
+                          : '高速区間を精密解析中... '}
+                      {/* 進捗の数値だけ DOM 直書きで更新する（再描画を避けるため） */}
+                      <span ref={progressTextRef}>0%</span>
+                    </>
+                  )}
                 </span>
                 {state === 'batch-analyzing' && (
                   <div className="batch-progress-bar">
-                    <div className="batch-progress-fill" style={{ width: `${batchProgress}%` }} />
+                    <div className="batch-progress-fill" ref={progressFillRef} />
                   </div>
                 )}
               </div>

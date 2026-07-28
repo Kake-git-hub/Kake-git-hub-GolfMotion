@@ -15,6 +15,12 @@ import { ANGLE_KEYS } from '../types/record';
 
 const STORAGE_KEY = 'golf-motion.records.v1';
 
+/**
+ * 保存キー (バックアップ機能がサイズ概算のために参照する)
+ * 値の読み書きは必ず本モジュールの関数経由で行うこと。
+ */
+export const RECORDS_STORAGE_KEY = STORAGE_KEY;
+
 /** 妥当な PPointId かどうか */
 function isPPointId(v: unknown): v is PPointId {
   return typeof v === 'string' && (P_POINT_IDS as string[]).includes(v);
@@ -152,13 +158,16 @@ function readAll(): SwingRecord[] {
 
 /**
  * 全記録を localStorage に書き戻す (内部用)
- * 失敗しても例外は投げず console.warn するのみ
+ * 失敗しても例外は投げず console.warn するのみ。成否は戻り値で返す
+ * (通常の保存経路は戻り値を無視する。バックアップ復元だけが失敗を UI に伝える)
  */
-function writeAll(records: SwingRecord[]): void {
+function writeAll(records: SwingRecord[]): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    return true;
   } catch (e) {
     console.warn('スイング記録の保存に失敗しました (容量超過の可能性があります)', e);
+    return false;
   }
 }
 
@@ -186,6 +195,30 @@ export function updateRecordNote(id: string, note: string): void {
 
   target.note = note;
   writeAll(records);
+}
+
+/**
+ * 全記録を丸ごと置き換える (バックアップ復元用)
+ *
+ * 引数はバックアップファイル由来の信頼できないデータを想定しているため、
+ * 1 件ずつ既存の正規化を通し、壊れた記録は捨てる。
+ * id が重複する場合は「先に現れたもの」を採用する
+ * (マージ時に [既存, 取り込み] の順で渡せば既存が優先される)。
+ *
+ * @returns 保存できた記録の配列。保存自体に失敗した場合 (容量超過など) は null
+ */
+export function replaceAllRecords(records: readonly unknown[]): SwingRecord[] | null {
+  const seen = new Set<string>();
+  const normalized: SwingRecord[] = [];
+
+  for (const raw of records) {
+    const record = normalizeRecord(raw);
+    if (record === null || seen.has(record.id)) continue;
+    seen.add(record.id);
+    normalized.push(record);
+  }
+
+  return writeAll(normalized) ? normalized : null;
 }
 
 /** 全削除 (確認は呼び出し側の責務) */

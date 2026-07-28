@@ -1,0 +1,558 @@
+/* =========================================================
+   データのバックアップ / 復元 (DataSync)
+   - ds-* プレフィックス
+   - 既存のダークテーマ (#1a1a2e / アクセント #88ccff) に合わせる
+   - タップ領域は最低 32px、フォントは 0.7〜0.9rem
+   ========================================================= */
+
+.ds-root {
+  --ds-accent: #88ccff;
+  --ds-surface-1: rgba(255, 255, 255, 0.04);
+  --ds-surface-2: rgba(255, 255, 255, 0.08);
+  --ds-surface-3: rgba(255, 255, 255, 0.12);
+  --ds-line: rgba(255, 255, 255, 0.12);
+  --ds-ink: #ffffff;
+  --ds-ink-2: #c9c9dd;
+  --ds-ink-muted: #9a9ab5;
+  --ds-radius: 10px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 10px 8px 40px;
+  box-sizing: border-box;
+}
+
+/* ===== ヘッダー ===== */
+
+.ds-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ds-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ds-ink);
+  letter-spacing: 0.01em;
+}
+
+.ds-lead {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--ds-ink-muted);
+}
+
+/* ===== 現在のデータ量 ===== */
+
+.ds-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ds-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  background: var(--ds-surface-1);
+  border: 1px solid var(--ds-line);
+  border-radius: 8px;
+}
+
+.ds-stat-label {
+  font-size: 0.68rem;
+  color: var(--ds-ink-muted);
+}
+
+.ds-stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ds-accent);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.ds-stat-unit {
+  font-size: 0.65rem;
+  color: var(--ds-ink-muted);
+}
+
+.ds-note,
+.ds-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.ds-note {
+  background: var(--ds-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--ds-ink-muted);
+}
+
+.ds-warn {
+  background: rgba(255, 170, 60, 0.10);
+  border: 1px solid rgba(255, 170, 60, 0.35);
+  color: #ffcc88;
+}
+
+/* ===== メッセージ ===== */
+
+.ds-msg {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.ds-msg--ok {
+  background: rgba(102, 221, 170, 0.12);
+  border: 1px solid rgba(102, 221, 170, 0.4);
+  color: #88ffcc;
+}
+
+.ds-msg--err {
+  background: rgba(255, 90, 90, 0.12);
+  border: 1px solid rgba(255, 90, 90, 0.4);
+  color: #ffb3b3;
+}
+
+.ds-msg--info {
+  background: rgba(136, 204, 255, 0.10);
+  border: 1px solid rgba(136, 204, 255, 0.35);
+  color: var(--ds-accent);
+}
+
+/* ===== 再読み込みの案内 ===== */
+
+.ds-reload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(136, 204, 255, 0.08);
+  border: 1px solid rgba(136, 204, 255, 0.3);
+  border-radius: 8px;
+}
+
+.ds-reload-text {
+  flex: 1 1 auto;
+  font-size: 0.72rem;
+  color: var(--ds-ink-2);
+}
+
+/* ===== カード (セクション) ===== */
+
+.ds-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--ds-surface-1);
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-radius);
+}
+
+.ds-card-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ds-ink);
+}
+
+.ds-card-note {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  color: var(--ds-ink-muted);
+}
+
+.ds-card-note strong {
+  color: var(--ds-ink-2);
+}
+
+.ds-code {
+  padding: 1px 5px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 0.68rem;
+  color: var(--ds-accent);
+  word-break: break-all;
+}
+
+/* ===== ボタン ===== */
+
+.ds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: var(--ds-ink-2);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ds-btn:hover:not(:disabled) {
+  background: var(--ds-surface-3);
+  border-color: var(--ds-accent);
+  color: var(--ds-ink);
+}
+
+.ds-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ds-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-btn--primary {
+  background: rgba(136, 204, 255, 0.14);
+  border-color: rgba(136, 204, 255, 0.35);
+  color: var(--ds-accent);
+}
+
+.ds-btn--primary:hover:not(:disabled) {
+  background: rgba(136, 204, 255, 0.24);
+}
+
+.ds-btn--small {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* ファイル選択はラベルをボタンに見せる (input は視覚的に隠すがフォーカス可能に保つ) */
+.ds-btn--file {
+  position: relative;
+  overflow: hidden;
+}
+
+.ds-btn--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ds-file-input:focus-visible + * ,
+.ds-btn--file:focus-within {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+
+/* ===== 復元の確認パネル ===== */
+
+.ds-restore {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(136, 204, 255, 0.06);
+  border: 1px solid rgba(136, 204, 255, 0.3);
+  border-radius: var(--ds-radius);
+}
+
+.ds-restore-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ds-accent);
+}
+
+.ds-restore-source {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--ds-ink-muted);
+  word-break: break-all;
+}
+
+.ds-restore-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+  color: var(--ds-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 置き換え / 追加 の選択 --- */
+
+.ds-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.ds-modes-legend {
+  padding: 0 4px;
+  font-size: 0.7rem;
+  color: var(--ds-ink-muted);
+}
+
+.ds-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.ds-mode:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ds-mode input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--ds-accent);
+  flex-shrink: 0;
+}
+
+.ds-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ds-mode-text strong {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ds-ink);
+}
+
+.ds-mode-text small {
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: var(--ds-ink-muted);
+}
+
+/* ===== クライアント ID 入力 ===== */
+
+.ds-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ds-field-label {
+  font-size: 0.7rem;
+  color: var(--ds-ink-muted);
+}
+
+.ds-field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ds-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  color: var(--ds-ink);
+  font-family: inherit;
+  font-size: 0.75rem;
+}
+
+.ds-input::placeholder {
+  color: #6a6a80;
+}
+
+.ds-input:focus {
+  outline: none;
+  border-color: var(--ds-accent);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.ds-masked {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 7px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--ds-ink-muted);
+  word-break: break-all;
+}
+
+/* ===== 接続状態 ===== */
+
+.ds-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.ds-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ds-ink-muted);
+}
+
+.ds-badge--on {
+  background: rgba(102, 221, 170, 0.14);
+  border-color: rgba(102, 221, 170, 0.4);
+  color: #88ffcc;
+}
+
+.ds-status-text {
+  font-size: 0.7rem;
+  color: var(--ds-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== 設定手順 (折りたたみ) ===== */
+
+.ds-details {
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.ds-summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ds-accent);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ds-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ds-summary::before {
+  content: '▸';
+  margin-right: 6px;
+  font-size: 0.7rem;
+}
+
+.ds-details[open] .ds-summary::before {
+  content: '▾';
+}
+
+.ds-steps {
+  margin: 0;
+  padding: 0 12px 4px 28px;
+  font-size: 0.7rem;
+  line-height: 1.7;
+  color: var(--ds-ink-2);
+}
+
+.ds-steps li {
+  margin-bottom: 4px;
+}
+
+.ds-steps strong {
+  color: var(--ds-ink);
+}
+
+.ds-origins {
+  margin: 4px 0;
+  padding-left: 14px;
+  list-style: none;
+}
+
+.ds-origins li {
+  margin-bottom: 2px;
+}
+
+.ds-link {
+  color: var(--ds-accent);
+  text-decoration: underline;
+}
+
+.ds-steps-note {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 0.65rem;
+  line-height: 1.6;
+  color: var(--ds-ink-muted);
+}
+
+/* ===== レスポンシブ (スマホ) ===== */
+
+@media (max-width: 480px) {
+  .ds-root {
+    padding: 8px 6px 32px;
+    gap: 10px;
+  }
+
+  .ds-btn {
+    flex: 1 1 auto;
+  }
+
+  .ds-btn--small {
+    flex: 0 0 auto;
+  }
+
+  .ds-stat-value {
+    font-size: 1rem;
+  }
+}

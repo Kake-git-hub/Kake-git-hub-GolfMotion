@@ -16,7 +16,11 @@ let lastTimestamp = -1;
 
 /**
  * MediaPipe PoseLandmarker を初期化する
- * heavy モデルを使用し、GPU デリゲートで実行
+ *
+ * モデルは full を使用し、GPU デリゲートで実行する。
+ * heavy は 1 フレームあたりの推論が重く、200 フレーム前後を一括解析する
+ * この用途では待ち時間が体感できるほど伸びる。full でも骨格の主要関節
+ * （肩・肘・手首・腰・膝）の精度は P 点検出に十分。
  */
 export async function initPoseDetector(): Promise<void> {
   const vision = await FilesetResolver.forVisionTasks(
@@ -26,7 +30,7 @@ export async function initPoseDetector(): Promise<void> {
   poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
       modelAssetPath:
-        'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
+        'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
       delegate: 'GPU',
     },
     runningMode: 'VIDEO',

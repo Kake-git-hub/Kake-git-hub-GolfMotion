@@ -13,6 +13,11 @@ import { DEFAULT_CLUBS } from '../data/defaultClubs';
 
 /** 新スキーマの保存キー */
 const STORAGE_KEY = 'golf-motion.clubSets.v1';
+/**
+ * 保存キー (バックアップ機能がサイズ概算のために参照する)
+ * 値の読み書きは必ず本モジュールの関数経由で行うこと。
+ */
+export const CLUB_SETS_STORAGE_KEY = STORAGE_KEY;
 /** 旧スキーマ (clubStore.ts) の保存キー。マイグレーション元としてのみ参照する */
 const LEGACY_CLUBS_KEY = 'golf-motion.clubs.v1';
 /** 初期セット / マイグレーション時のセット名 */
@@ -170,15 +175,52 @@ export function loadClubSets(): ClubSet[] {
 }
 
 /**
+ * 全セットを localStorage に書き込む (内部用)
+ * 失敗しても例外は投げず console.warn するのみ。成否は戻り値で返す
+ * (通常の保存経路は戻り値を無視する。バックアップ復元だけが失敗を UI に伝える)
+ */
+function writeSets(sets: ClubSet[]): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sets));
+    return true;
+  } catch (e) {
+    console.warn('クラブセットの保存に失敗しました', e);
+    return false;
+  }
+}
+
+/**
  * 全セットを保存する
  * 保存に失敗しても例外は投げず console.warn するのみ
  */
 export function saveClubSets(sets: ClubSet[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sets));
-  } catch (e) {
-    console.warn('クラブセットの保存に失敗しました', e);
+  writeSets(sets);
+}
+
+/**
+ * 全セットを丸ごと置き換える (バックアップ復元用)
+ *
+ * 引数はバックアップファイル由来の信頼できないデータを想定しているため、
+ * 1 件ずつ既存の正規化を通し、壊れたセットは捨てる。
+ * id が重複する場合は「先に現れたもの」を採用する
+ * (マージ時に [既存, 取り込み] の順で渡せば既存が優先される)。
+ * メインセットは最終的に必ず 1 つだけになるよう補正する。
+ *
+ * @returns 保存できたセットの配列。保存自体に失敗した場合は null
+ */
+export function replaceAllClubSets(sets: readonly unknown[]): ClubSet[] | null {
+  const seen = new Set<string>();
+  const normalized: ClubSet[] = [];
+
+  for (const raw of sets) {
+    const set = normalizeSet(raw);
+    if (set === null || seen.has(set.id)) continue;
+    seen.add(set.id);
+    normalized.push(set);
   }
+
+  const next = ensureSingleMain(normalized);
+  return writeSets(next) ? next : null;
 }
 
 /** メインセット(isMain=trueのもの)を返す。無ければ先頭を返す。0件ならnull */
