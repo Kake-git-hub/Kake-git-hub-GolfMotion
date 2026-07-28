@@ -49,6 +49,55 @@ function acquireCanvas(
   return { canvas, ctx };
 }
 
+/** フィルムストリップ用サムネイルの既定幅 (px) */
+const DEFAULT_THUMB_WIDTH = 84;
+/** サムネイルの JPEG 品質（帯に小さく並べるだけなので低めで十分） */
+const THUMB_QUALITY = 0.6;
+
+/** サムネイル専用キャンバス（本体用と別に持ち、毎フレームのリサイズ往復を避ける） */
+let thumbCanvas: HTMLCanvasElement | null = null;
+let thumbCtx: CanvasRenderingContext2D | null = null;
+
+/**
+ * 現在表示中のフレームを小さなサムネイル dataURL として取得する。
+ *
+ * シークは行わないので、バッチ解析ループのように既に目的の時刻へ
+ * シーク済みの場面で追加コストほぼゼロで呼べる。
+ *
+ * @param video 対象の video 要素
+ * @param maxWidth 出力の最大幅 (既定 84)
+ * @returns dataURL。失敗したら null
+ */
+export function captureThumbnail(
+  video: HTMLVideoElement,
+  maxWidth = DEFAULT_THUMB_WIDTH,
+): string | null {
+  if (typeof document === 'undefined') return null;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+
+  const limit = maxWidth > 0 ? maxWidth : DEFAULT_THUMB_WIDTH;
+  const scale = vw > limit ? limit / vw : 1;
+  const w = Math.max(1, Math.round(vw * scale));
+  const h = Math.max(1, Math.round(vh * scale));
+
+  if (!thumbCanvas) {
+    thumbCanvas = document.createElement('canvas');
+    thumbCtx = thumbCanvas.getContext('2d');
+  }
+  if (!thumbCanvas || !thumbCtx) return null;
+  if (thumbCanvas.width !== w) thumbCanvas.width = w;
+  if (thumbCanvas.height !== h) thumbCanvas.height = h;
+
+  try {
+    thumbCtx.drawImage(video, 0, 0, w, h);
+    return thumbCanvas.toDataURL('image/jpeg', THUMB_QUALITY);
+  } catch {
+    return null;
+  }
+}
+
 /** シーク先の時刻を [0, duration] に収める */
 function clampTime(video: HTMLVideoElement, timeSec: number): number {
   const t = Number.isFinite(timeSec) ? timeSec : 0;
